@@ -1,5 +1,5 @@
 //
-// WhisperTranslationTests.swift
+// FileTranslationTests.swift
 // SwiftFasterWhisper Tests
 //
 // Created by Amr Aboelela on 1/21/2026.
@@ -10,7 +10,7 @@ import AVFoundation
 @testable import SwiftFasterWhisper
 
 @Suite(.serialized)
-struct WhisperTranslationTests {
+struct FileTranslationTests {
 
     // MARK: - Translation Tests (using Whisper's built-in translation)
 

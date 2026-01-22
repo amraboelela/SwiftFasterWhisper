@@ -10,11 +10,11 @@ import faster_whisper
 
 /// Delegate protocol for streaming recognition callbacks
 public protocol StreamingRecognizerDelegate: AnyObject, Sendable {
-    /// Called when new transcription segments are available
+    /// Called when a new transcription segment is available
     /// - Parameters:
     ///   - recognizer: The streaming recognizer instance
-    ///   - segments: Array of new transcription segments
-    func recognizer(_ recognizer: StreamingRecognizer, didReceiveSegments segments: [TranscriptionSegment])
+    ///   - segment: A new stable transcription segment (or nil if no segment ready yet)
+    func recognizer(_ recognizer: StreamingRecognizer, didReceiveSegment segment: TranscriptionSegment?)
 
     /// Called when streaming finishes or encounters an error
     /// - Parameters:
@@ -86,8 +86,8 @@ public final class StreamingRecognizer {
     }
 
     /// Add an audio chunk for processing
-    /// Call this repeatedly with small audio chunks (e.g., 30ms)
-    /// - Parameter chunk: Audio samples (16kHz mono float32)
+    /// Call this repeatedly with 1-second audio chunks (16000 samples at 16kHz)
+    /// - Parameter chunk: Audio samples (16kHz mono float32, recommended size: 16000 samples = 1 second)
     /// - Throws: `RecognitionError` if streaming is not active
     public func addAudioChunk(_ chunk: [Float]) throws {
         guard let handle = modelHandle else {
@@ -111,11 +111,11 @@ public final class StreamingRecognizer {
         }
     }
 
-    /// Poll for new transcription segments
-    /// Call this periodically (e.g., every 100-500ms) to check for new segments
-    /// - Returns: Array of new segments, or empty array if none available
+    /// Poll for a new transcription segment
+    /// Call this periodically (e.g., every 100-500ms) to check for a new stable segment
+    /// - Returns: A new segment if one is ready, or nil if no segment is available yet
     /// - Throws: `RecognitionError` if streaming is not active
-    public func getNewSegments() throws -> [TranscriptionSegment] {
+    public func getNewSegment() throws -> TranscriptionSegment? {
         guard let handle = modelHandle else {
             throw RecognitionError.modelNotLoaded
         }
@@ -128,19 +128,18 @@ public final class StreamingRecognizer {
         let segments = whisper_get_new_segments(handle, &count)
 
         guard count > 0, let segments = segments else {
-            return []
+            return nil
         }
         defer { whisper_free_segments(segments, count) }
 
-        return (0..<Int(count)).map { i in
-            let segment = segments[i]
-            let text = segment.text != nil ? String(cString: segment.text) : ""
-            return TranscriptionSegment(
-                text: text,
-                start: segment.start,
-                end: segment.end
-            )
-        }
+        // Return only the first segment (expanding window emits one stable segment at a time)
+        let segment = segments[0]
+        let text = segment.text != nil ? String(cString: segment.text) : ""
+        return TranscriptionSegment(
+            text: text,
+            start: segment.start,
+            end: segment.end
+        )
     }
 
     /// Stop streaming transcription
@@ -158,17 +157,17 @@ public final class StreamingRecognizer {
 
     /// Stream transcription segments using AsyncThrowingStream
     /// - Parameter language: Optional language code (nil for auto-detection)
-    /// - Returns: AsyncThrowingStream of segment arrays
+    /// - Returns: AsyncThrowingStream of individual segments (nil if no segment ready yet)
     ///
     /// Usage:
     /// ```swift
-    /// for try await segments in recognizer.streamingSegments() {
-    ///     for segment in segments {
+    /// for try await segment in recognizer.streamingSegments() {
+    ///     if let segment = segment {
     ///         print(segment.text)
     ///     }
     /// }
     /// ```
-    public func streamingSegments(language: String? = nil) -> AsyncThrowingStream<[TranscriptionSegment], Error> {
+    public func streamingSegments(language: String? = nil) -> AsyncThrowingStream<TranscriptionSegment?, Error> {
         AsyncThrowingStream { continuation in
             Task {
                 do {
@@ -176,10 +175,8 @@ public final class StreamingRecognizer {
 
                     // Poll for segments every 500ms
                     while isStreaming {
-                        let segments = try getNewSegments()
-                        if !segments.isEmpty {
-                            continuation.yield(segments)
-                        }
+                        let segment = try getNewSegment()
+                        continuation.yield(segment)
                         try await Task.sleep(for: .milliseconds(500))
                     }
 

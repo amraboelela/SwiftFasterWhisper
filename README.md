@@ -8,7 +8,7 @@ SwiftFasterWhisper provides a Swift-native API for fast, on-device transcription
 
 ### Key Features
 
-- **Real-time Streaming**: Process audio in 30ms chunks with low latency
+- **Real-time Streaming**: Process audio in 1-second chunks with low latency
 - **Incremental Output**: Receive segments as they're transcribed
 - **Multi-language Support**: Transcribe speech in any language
 - **Translation**: Translate from any language to English
@@ -26,11 +26,11 @@ SwiftFasterWhisper provides a Swift-native API for fast, on-device transcription
 
 ### Streaming Approach
 
-SwiftFasterWhisper uses a sophisticated streaming strategy:
-- Rolling audio buffer (1-3 seconds)
-- Sliding window decoding (every ~1 second)
-- Segment deduplication to prevent repeated output
-- Time cursor tracking for stable segment emission
+SwiftFasterWhisper uses an expanding window streaming strategy:
+- Start with 1-second audio window
+- Expand by 1 second each iteration
+- Detect stable segments via repetition (segment appears identically twice)
+- Emit stable segments and advance window to prevent duplicates
 
 ## Why SwiftFasterWhisper?
 
@@ -204,8 +204,8 @@ let result = try await whisper.translate(audioFilePath: "unknown.wav")
 import SwiftFasterWhisper
 
 class MyDelegate: StreamingRecognizerDelegate {
-    func recognizer(_ recognizer: StreamingRecognizer, didReceiveSegments segments: [TranscriptionSegment]) {
-        for segment in segments {
+    func recognizer(_ recognizer: StreamingRecognizer, didReceiveSegment segment: TranscriptionSegment?) {
+        if let segment = segment {
             print("[\(segment.start)s - \(segment.end)s] \(segment.text)")
         }
     }
@@ -227,14 +227,15 @@ try recognizer.loadModel()
 recognizer.delegate = MyDelegate()
 try recognizer.startStreaming(language: "en")
 
-// Feed audio chunks (e.g., 30ms chunks = 480 samples at 16kHz)
+// Feed audio chunks (1 second chunks = 16000 samples at 16kHz)
 while streaming {
-    let chunk: [Float] = getNextAudioChunk()  // Your audio capture
+    let chunk: [Float] = getNextAudioChunk()  // Your audio capture (16000 samples)
     try recognizer.addAudioChunk(chunk)
 
-    // Poll for new segments every ~500ms
-    let newSegments = try recognizer.getNewSegments()
-    // Delegate will be called automatically
+    // Poll for new segment every ~500ms
+    if let newSegment = try recognizer.getNewSegment() {
+        print("New segment: \(newSegment.text)")
+    }
 }
 
 recognizer.stopStreaming()
@@ -255,8 +256,8 @@ Task {
 }
 
 // Consume segments
-for try await segments in recognizer.streamingSegments(language: "en") {
-    for segment in segments {
+for try await segment in recognizer.streamingSegments(language: "en") {
+    if let segment = segment {
         print("[\(segment.start)s - \(segment.end)s] \(segment.text)")
     }
 }

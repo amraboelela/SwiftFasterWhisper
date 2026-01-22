@@ -1,5 +1,5 @@
 //
-// WhisperTranscriptionTests.swift
+// FileTranscriptionTests.swift
 // SwiftFasterWhisper Tests
 //
 // Created by Amr Aboelela on 1/21/2026.
@@ -10,7 +10,7 @@ import AVFoundation
 @testable import SwiftFasterWhisper
 
 @Suite(.serialized)
-struct WhisperTranscriptionTests {
+struct FileTranscriptionTests {
 
     @Test func transcribeEnglishAudio() async throws {
         let base = TestBase()

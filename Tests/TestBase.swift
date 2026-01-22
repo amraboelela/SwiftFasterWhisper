@@ -23,7 +23,7 @@ class TestBase {
 
         if TestBase.sharedWhisper == nil {
             let modelPath = try await downloadModelIfNeeded()
-            print("Initializing SwiftFasterWhisper with medium model...")
+            print("Initializing SwiftFasterWhisper with large-v2 model...")
             let instance = SwiftFasterWhisper(modelPath: modelPath)
             try instance.loadModel()
             TestBase.sharedWhisper = instance
@@ -167,7 +167,7 @@ class TestBase {
 
         let projectRoot = projectRootURL()
         let modelsDir = projectRoot.appendingPathComponent("Tests").appendingPathComponent("Models")
-        let modelURL = modelsDir.appendingPathComponent("whisper-medium-ct2")
+        let modelURL = modelsDir.appendingPathComponent("whisper-large-v2-ct2")
 
         try fileManager.createDirectory(
             at: modelsDir,
@@ -194,11 +194,11 @@ class TestBase {
             let attributes = try fileManager.attributesOfItem(atPath: modelBin.path)
             let fileSize = attributes[.size] as? Int64 ?? 0
 
-            // CTranslate2 medium float16 model should be ~1.5GB
-            if fileSize > 500_000_000 && missingFiles.isEmpty {
+            // CTranslate2 large-v2 float16 model should be ~3GB
+            if fileSize > 2_000_000_000 && missingFiles.isEmpty {
                 print("✅ Using existing CTranslate2 model at \(modelURL.path)")
                 return modelURL.path
-            } else if fileSize > 500_000_000 && !missingFiles.isEmpty {
+            } else if fileSize > 2_000_000_000 && !missingFiles.isEmpty {
                 print("⚠️ Model exists but missing files: \(missingFiles.joined(separator: ", "))")
                 print("Downloading missing files...")
             } else if fileSize > 0 {
@@ -206,14 +206,14 @@ class TestBase {
                 missingFiles = requiredFiles
             }
         } else {
-            print("📥 Downloading Whisper medium model (CTranslate2 format, ~1.5GB)...")
+            print("📥 Downloading Whisper large-v2 model (CTranslate2 format, ~3GB)...")
             print("This may take several minutes...")
             missingFiles = requiredFiles
         }
 
         // Download missing files from Hugging Face
         // Using Systran's official faster-whisper models
-        let baseURL = "https://huggingface.co/Systran/faster-whisper-medium/resolve/main"
+        let baseURL = "https://huggingface.co/Systran/faster-whisper-large-v2/resolve/main"
 
         for fileName in missingFiles {
             let remoteURL = URL(string: "\(baseURL)/\(fileName)")!
