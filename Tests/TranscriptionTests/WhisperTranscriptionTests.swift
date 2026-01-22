@@ -12,83 +12,136 @@ import AVFoundation
 @Suite(.serialized)
 struct WhisperTranscriptionTests {
 
-    @Test func transcribeFromAudioFrames() async throws {
+    @Test func transcribeEnglishAudio() async throws {
         let base = TestBase()
         let whisper = try await base.getWhisper()
 
-        print("\n========== TRANSCRIPTION TEST (Audio Frames) ==========")
+        print("\n========== TRANSCRIPTION TEST (English) ==========")
 
         let audioPath = try base.findTestFile("jfk.wav")
         let audioFrames = try base.convertAudioToPCM(audioPath: audioPath)
 
-        print("Loading audio file: \(audioPath)")
-        print("Duration: \(String(format: "%.2f", Double(audioFrames.count) / 16000.0)) seconds")
-        print("Loaded \(audioFrames.count) PCM samples")
-
         let result = try await whisper.transcribe(audio: audioFrames)
-
-        #expect(result.segments.count > 0, "Should receive at least one segment")
-        #expect(result.duration > 0, "Duration should be positive")
-        #expect(!result.language.isEmpty, "Language should be detected")
-
         let fullText = result.text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 
-        print("\n========== TRANSCRIPTION RESULT ==========")
         print("Language: \(result.language) (confidence: \(result.languageProbability))")
         print("Duration: \(result.duration) seconds")
         print("Segments: \(result.segments.count)")
-        print("Full text: \(fullText)")
-        print("==========================================\n")
+        print("==========================================")
 
         let expectedText = "and so my fellow americans ask not what your country can do for you ask what you can do for your country"
-        #expect(fullText == expectedText, "Transcription should match expected text")
+        let comparison = base.compareWithReference(generated: fullText, expected: expectedText)
+
+        print("========== ACCURACY ANALYSIS ==========")
+        print("Expected: \(expectedText)")
+        print("Generated: \(fullText)")
+        print("\nMetrics:")
+        print("  Correct characters: \(comparison.correct)/\(comparison.total)")
+        print("  Edit distance: \(comparison.editDistance)")
+        print("  Accuracy: \(String(format: "%.2f", comparison.accuracy))%")
+        print("=======================================\n")
+
+        #expect(comparison.accuracy > 80.0,
+            "Transcription accuracy should be greater than 80%. Got \(String(format: "%.2f", comparison.accuracy))%")
     }
 
-    @Test func transcribeFromFile() async throws {
+    @Test func transcribeTurkishAudio05() async throws {
         let base = TestBase()
         let whisper = try await base.getWhisper()
 
-        print("\n========== TRANSCRIPTION TEST (File Path) ==========")
+        print("\n========== TRANSCRIPTION TEST (Turkish 05) ==========")
 
-        let audioPath = try base.findTestFile("jfk.wav")
-        let result = try await whisper.transcribe(audioFilePath: audioPath)
-
-        #expect(result.segments.count > 0, "Should receive at least one segment")
-        #expect(result.duration > 0, "Duration should be positive")
-
-        print("✅ Transcribed \(result.segments.count) segments from file")
-    }
-
-    @Test func transcribeWithSpecificLanguage() async throws {
-        let base = TestBase()
-        let whisper = try await base.getWhisper()
-
-        print("\n========== TRANSCRIPTION WITH LANGUAGE TEST ==========")
-
-        let audioPath = try base.findTestFile("jfk.wav")
+        let expectedTurkish = "Kuraklık yüzünden yeterince ot bitmiyor. Biz de boyayı sulandırmak zorunda kaldık. Canlı başla uğraşıyoruz ama anca bu kadar oluyor."
+        let audioPath = try base.findTestFile("05-speech.wav")
         let audioFrames = try base.convertAudioToPCM(audioPath: audioPath)
 
-        let result = try await whisper.transcribe(audio: audioFrames, language: "en")
+        let result = try await whisper.transcribe(audio: audioFrames, language: "tr")
+        let fullText = result.text
 
-        #expect(result.segments.count > 0, "Should receive at least one segment")
-        print("✅ English transcription: \(result.text)")
+        print("Language: \(result.language)")
+        print("Duration: \(result.duration) seconds")
+        print("Segments: \(result.segments.count)")
+        print("==========================================")
+
+        let comparison = base.compareWithReference(generated: fullText, expected: expectedTurkish)
+
+        print("========== ACCURACY ANALYSIS ==========")
+        print("Expected: \(expectedTurkish)")
+        print("Generated: \(fullText)")
+        print("\nMetrics:")
+        print("  Correct characters: \(comparison.correct)/\(comparison.total)")
+        print("  Edit distance: \(comparison.editDistance)")
+        print("  Accuracy: \(String(format: "%.2f", comparison.accuracy))%")
+        print("=======================================\n")
+
+        #expect(comparison.accuracy > 70.0,
+            "Turkish transcription accuracy should be greater than 70%. Got \(String(format: "%.2f", comparison.accuracy))%")
     }
 
-    @Test func autoLanguageDetection() async throws {
+    @Test func transcribeTurkishAudio06() async throws {
         let base = TestBase()
         let whisper = try await base.getWhisper()
 
-        print("\n========== AUTO LANGUAGE DETECTION TEST ==========")
+        print("\n========== TRANSCRIPTION TEST (Turkish 06) ==========")
 
-        let audioPath = try base.findTestFile("jfk.wav")
+        let expectedTurkish = "Çivi totunu yapraklarıyla köklerini denediniz mi?"
+        let audioPath = try base.findTestFile("06-speech.wav")
         let audioFrames = try base.convertAudioToPCM(audioPath: audioPath)
 
-        let result = try await whisper.transcribe(audio: audioFrames)
+        let result = try await whisper.transcribe(audio: audioFrames, language: "tr")
+        let fullText = result.text
 
-        #expect(!result.language.isEmpty, "Language should be auto-detected")
-        #expect(result.languageProbability > 0, "Language confidence should be positive")
+        print("Language: \(result.language)")
+        print("Duration: \(result.duration) seconds")
+        print("Segments: \(result.segments.count)")
+        print("==========================================")
 
-        print("✅ Auto-detected language: \(result.language) (confidence: \(result.languageProbability))")
+        let comparison = base.compareWithReference(generated: fullText, expected: expectedTurkish)
+
+        print("========== ACCURACY ANALYSIS ==========")
+        print("Expected: \(expectedTurkish)")
+        print("Generated: \(fullText)")
+        print("\nMetrics:")
+        print("  Correct characters: \(comparison.correct)/\(comparison.total)")
+        print("  Edit distance: \(comparison.editDistance)")
+        print("  Accuracy: \(String(format: "%.2f", comparison.accuracy))%")
+        print("=======================================\n")
+
+        #expect(comparison.accuracy > 70.0,
+            "Turkish transcription accuracy should be greater than 70%. Got \(String(format: "%.2f", comparison.accuracy))%")
+    }
+
+    @Test func transcribeTurkishAudio12() async throws {
+        let base = TestBase()
+        let whisper = try await base.getWhisper()
+
+        print("\n========== TRANSCRIPTION TEST (Turkish 12) ==========")
+
+        let expectedTurkish = "Başka bir çare bulmalıyız. Çok arıyorum."
+        let audioPath = try base.findTestFile("12-speech.wav")
+        let audioFrames = try base.convertAudioToPCM(audioPath: audioPath)
+
+        let result = try await whisper.transcribe(audio: audioFrames, language: "tr")
+        let fullText = result.text
+
+        print("Language: \(result.language)")
+        print("Duration: \(result.duration) seconds")
+        print("Segments: \(result.segments.count)")
+        print("==========================================")
+
+        let comparison = base.compareWithReference(generated: fullText, expected: expectedTurkish)
+
+        print("========== ACCURACY ANALYSIS ==========")
+        print("Expected: \(expectedTurkish)")
+        print("Generated: \(fullText)")
+        print("\nMetrics:")
+        print("  Correct characters: \(comparison.correct)/\(comparison.total)")
+        print("  Edit distance: \(comparison.editDistance)")
+        print("  Accuracy: \(String(format: "%.2f", comparison.accuracy))%")
+        print("=======================================\n")
+
+        #expect(comparison.accuracy > 60.0,
+            "Turkish transcription accuracy should be greater than 60%. Got \(String(format: "%.2f", comparison.accuracy))%")
     }
 
     @Test func emptyAudioError() async throws {

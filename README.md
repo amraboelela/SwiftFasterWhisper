@@ -307,6 +307,24 @@ swift test
 
 The model is cached in `Tests/Models/whisper-medium-ct2` and reused for subsequent test runs.
 
+### Running Tests Serially
+
+To ensure all tests run serially and avoid any model loading conflicts:
+
+```bash
+swift test --no-parallel
+```
+
+Or limit to a single worker:
+
+```bash
+swift test --num-workers 1
+```
+
+This ensures that test suites run one after another, preventing model loading conflicts and making the output easier to follow.
+
+**Note**: Each individual test suite already uses `@Suite(.serialized)` to run its tests serially within the suite.
+
 ## Related Projects
 
 This project is a more generic version of [IArabicSpeech](https://github.com/amraboelela/IArabicSpeech), extending support from Arabic-specific recognition to multi-language transcription and translation.

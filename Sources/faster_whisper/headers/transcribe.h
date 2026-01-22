@@ -211,6 +211,9 @@ private:
   int tokens_per_second;
   double time_precision;
   int max_length;
+
+  // Time cursor for tracking emitted segments (prevents duplicates in streaming)
+  float emitted_time_cursor = 0.0f;
 };
 
 // --- Conceptual helper functions (replace with actual implementations) ---

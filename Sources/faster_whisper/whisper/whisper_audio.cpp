@@ -364,20 +364,6 @@ std::vector<std::vector<float>> AudioProcessor::compute_stft(const std::vector<f
           frame_data[n] = 0.0f;
       }
 
-      // Debug: log first frame data for frame 100
-      static bool logged_frame_data = false;
-      if (!logged_frame_data && frame == 100) {
-        std::cout << "  DEBUG frame 100 input: First 10 values: [";
-        for (size_t i = 0; i < std::min(size_t(10), frame_data.size()); ++i) {
-          if (i > 0) std::cout << " ";
-          // Add line breaks after 4th and 7th values to match Python's display
-          if (i == 4 || i == 8) std::cout << "\n ";
-          std::cout << std::scientific << std::setprecision(7) << frame_data[i];
-        }
-        std::cout << std::fixed << "]" << std::endl;
-        logged_frame_data = true;
-      }
-
       // Compute FFT using proper FFT implementation
       auto fft_result = FFT::rfft(frame_data);
 

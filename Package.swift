@@ -54,7 +54,17 @@ let package = Package(
         // Tests
         .testTarget(
             name: "SwiftFasterWhisperTests",
-            dependencies: ["SwiftFasterWhisper"]
+            dependencies: ["SwiftFasterWhisper"],
+            exclude: [
+                "Models",
+                "test-log.txt"
+            ],
+            resources: [
+                .copy("jfk.wav"),
+                .copy("05-speech.wav"),
+                .copy("06-speech.wav"),
+                .copy("12-speech.wav")
+            ]
         )
     ],
     cxxLanguageStandard: .cxx17
