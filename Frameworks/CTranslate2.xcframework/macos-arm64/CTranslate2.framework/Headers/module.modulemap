@@ -1,0 +1,5 @@
+framework module CTranslate2 {
+    umbrella header "ctranslate2/translator.h"
+    export *
+    module * { export * }
+}
