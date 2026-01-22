@@ -9,27 +9,31 @@ import Testing
 import AVFoundation
 @testable import SwiftFasterWhisper
 
-class TestBase {
-    let timeout: TimeInterval = 300
+// Actor to manage shared model instance safely in async contexts
+actor ModelManager {
+    private var sharedWhisper: SwiftFasterWhisper?
 
-    // Shared model instance across all tests (loaded once)
-    private static var sharedWhisper: SwiftFasterWhisper?
-    private static var modelLoadLock = NSLock()
-
-    // Access the shared instance
-    func getWhisper() async throws -> SwiftFasterWhisper {
-        TestBase.modelLoadLock.lock()
-        defer { TestBase.modelLoadLock.unlock() }
-
-        if TestBase.sharedWhisper == nil {
-            let modelPath = try await downloadModelIfNeeded()
+    func getWhisper(modelPath: String) throws -> SwiftFasterWhisper {
+        if sharedWhisper == nil {
             print("Initializing SwiftFasterWhisper with large-v2 model...")
             let instance = SwiftFasterWhisper(modelPath: modelPath)
             try instance.loadModel()
-            TestBase.sharedWhisper = instance
+            sharedWhisper = instance
         }
+        return sharedWhisper!
+    }
+}
 
-        return TestBase.sharedWhisper!
+class TestBase {
+    let timeout: TimeInterval = 300
+
+    // Shared model manager across all tests
+    private static let modelManager = ModelManager()
+
+    // Access the shared instance
+    func getWhisper() async throws -> SwiftFasterWhisper {
+        let modelPath = try await downloadModelIfNeeded()
+        return try await TestBase.modelManager.getWhisper(modelPath: modelPath)
     }
 
     // MARK: - Audio Processing
@@ -174,8 +178,8 @@ class TestBase {
             withIntermediateDirectories: true
         )
 
-        // Required model files
-        let requiredFiles = ["config.json", "model.bin", "vocabulary.json", "tokenizer.json"]
+        // Required model files for CTranslate2
+        let requiredFiles = ["config.json", "model.bin", "vocabulary.txt"]
         var missingFiles: [String] = []
 
         // Check which files are missing

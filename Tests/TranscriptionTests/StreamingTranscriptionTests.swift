@@ -38,9 +38,16 @@ struct StreamingTranscriptionTests {
             let end = min(offset + chunkSize, fullAudio.count)
             let chunk = Array(fullAudio[offset..<end])
 
-            print("\n[Chunk \(offset / chunkSize + 1)] Sending \(String(format: "%.2f", Float(chunk.count) / 16000.0))s of audio")
+            let energy = recognizer.calculateEnergy(chunk)
+            print("\n[Chunk \(offset / chunkSize + 1)] Energy: \(String(format: "%.6f", energy)), Sending \(String(format: "%.2f", Float(chunk.count) / 16000.0))s of audio")
 
-            try recognizer.addAudioChunk(chunk)
+            let processed = try recognizer.addAudioChunk(chunk)
+
+            if !processed {
+                print("⏭️  Skipped (low energy)")
+                offset = end
+                continue
+            }
 
             // Poll for new segment
             if let segment = try recognizer.getNewSegment() {
@@ -112,9 +119,16 @@ struct StreamingTranscriptionTests {
             let end = min(offset + chunkSize, fullAudio.count)
             let chunk = Array(fullAudio[offset..<end])
 
-            print("\n[Chunk \(offset / chunkSize + 1)] Sending \(String(format: "%.2f", Float(chunk.count) / 16000.0))s")
+            let energy = recognizer.calculateEnergy(chunk)
+            print("\n[Chunk \(offset / chunkSize + 1)] Energy: \(String(format: "%.6f", energy)), Sending \(String(format: "%.2f", Float(chunk.count) / 16000.0))s")
 
-            try recognizer.addAudioChunk(chunk)
+            let processed = try recognizer.addAudioChunk(chunk)
+
+            if !processed {
+                print("⏭️  Skipped (low energy)")
+                offset = end
+                continue
+            }
 
             // Poll for new segment (returns single segment or nil)
             if let segment = try recognizer.getNewSegment() {

@@ -8,10 +8,10 @@ SwiftFasterWhisper provides a Swift-native API for fast, on-device transcription
 
 ### Key Features
 
-- **Real-time Streaming**: Process audio in 1-second chunks with low latency
+- **Real-time Streaming**: Process audio in 1-second increments using an expanding window
 - **Incremental Output**: Receive segments as they're transcribed
 - **Multi-language Support**: Transcribe speech in any language
-- **Translation**: Translate from any language to English
+- **Translation**: Translate from any language to English (slower than transcription, accuracy varies by language)
 - **Swift Concurrency**: Modern async/await and delegate-based APIs
 - **Cancelable Operations**: Stop transcription at any time
 - **High Performance**: Leverages CTranslate2 for optimized inference
@@ -26,11 +26,24 @@ SwiftFasterWhisper provides a Swift-native API for fast, on-device transcription
 
 ### Streaming Approach
 
-SwiftFasterWhisper uses an expanding window streaming strategy:
+SwiftFasterWhisper uses an expanding window streaming strategy with automatic silence detection:
 - Start with 1-second audio window
 - Expand by 1 second each iteration
-- Detect stable segments via repetition (segment appears identically twice)
+- Stop expanding when a stable segment is emitted or max window length is reached (default: 3 seconds)
+- **Automatically skip low-energy chunks (silence)** using RMS energy detection
+- Detect stable segments via repetition (segment appears identically twice in consecutive windows)
 - Emit stable segments and advance window to prevent duplicates
+
+**Energy Detection:**
+- Each 1-second chunk is analyzed for energy level before processing
+- Chunks below the energy threshold (default: 0.01 RMS) are skipped as silence
+- Adjustable threshold via `recognizer.energyThreshold` property
+- Saves processing power and improves accuracy by ignoring silence
+
+**Window Management:**
+- Max window length prevents infinite expansion during long silence periods
+- Default max: 3 seconds (configurable in future versions)
+- Window resets after emitting a stable segment
 
 ## Why SwiftFasterWhisper?
 
@@ -137,21 +150,26 @@ try whisper.loadModel()
 
 ### Available Model Sizes
 
-| Model | Size (float16) | Speed | Quality |
-|-------|---------------|-------|---------|
-| tiny | ~75 MB | Fastest | Basic |
-| base | ~150 MB | Fast | Good |
-| small | ~500 MB | Medium | Better |
-| **medium** | ~1.5 GB | Slower | **Recommended** |
-| large-v3 | ~3 GB | Slowest | Best |
+| Model | Approx Size (float16) | Speed | Quality |
+|-------|----------------------|-------|---------|
+| tiny | ~70-80 MB | Fastest | Basic |
+| base | ~140-160 MB | Fast | Good |
+| small | ~400-500 MB | Medium | Better |
+| **medium** | ~1.5-2 GB | Slower | **Recommended** |
+| large-v2 | ~3-4 GB | Slowest | Best |
+| large-v3 | ~3-4 GB | Slowest | Best (requires 128 mel bands - not compatible) |
 
 **For most apps, use `medium`** - it offers the best balance of quality and performance.
+**For best quality, use `large-v2`** (used in tests).
+
+**Note on large-v3:** This model requires 128 mel band input features. SwiftFasterWhisper currently uses 80-band mel spectrograms (Whisper v1-v2 standard), so large-v3 is not compatible without audio conversion.
 
 To use a different model size, replace `faster-whisper-medium` with:
 - `Systran/faster-whisper-tiny`
 - `Systran/faster-whisper-base`
 - `Systran/faster-whisper-small`
-- `Systran/faster-whisper-large-v3`
+- `Systran/faster-whisper-large-v2`
+- ~~`Systran/faster-whisper-large-v3`~~ (incompatible - requires 128 mel bands)
 
 ## Usage
 
@@ -183,6 +201,8 @@ let result = try await whisper.transcribe(
 ```
 
 ### Translation (Any Language → English)
+
+**Note:** Translation uses Whisper's built-in translation capability, which can be slower than transcription and may be less accurate depending on the source language. For best results, use `large-v2` model.
 
 ```swift
 // Translate Spanish to English
@@ -227,10 +247,15 @@ try recognizer.loadModel()
 recognizer.delegate = MyDelegate()
 try recognizer.startStreaming(language: "en")
 
+// Optional: Adjust energy threshold for silence detection
+// Default is 0.01 - increase for noisier environments, decrease for quieter audio
+recognizer.energyThreshold = 0.02
+
 // Feed audio chunks (1 second chunks = 16000 samples at 16kHz)
+// Low-energy chunks are automatically skipped
 while streaming {
     let chunk: [Float] = getNextAudioChunk()  // Your audio capture (16000 samples)
-    try recognizer.addAudioChunk(chunk)
+    let processed = try recognizer.addAudioChunk(chunk)  // Returns true if processed, false if skipped
 
     // Poll for new segment every ~500ms
     if let newSegment = try recognizer.getNewSegment() {
@@ -263,6 +288,16 @@ for try await segment in recognizer.streamingSegments(language: "en") {
 }
 ```
 
+**Important: `getNewSegment()` Behavior**
+
+The `getNewSegment()` method:
+- Returns **only new segments** that haven't been returned before
+- Does **not** return duplicate segments (automatic deduplication)
+- Returns `nil` if no new segment is ready yet
+- Expanding window emits one stable segment at a time when repetition is detected
+
+This means you can call it repeatedly without worrying about receiving the same segment twice.
+
 ### Working with Segments
 
 ```swift
@@ -280,6 +315,38 @@ for segment in result.segments {
 // Language detection
 print("Detected language: \(result.language)")
 print("Confidence: \(result.languageProbability)")
+```
+
+### Energy Detection (Streaming)
+
+For streaming audio, you can control silence detection:
+
+```swift
+let recognizer = StreamingRecognizer(modelPath: modelPath)
+try recognizer.loadModel()
+
+// Check energy of an audio chunk
+let chunk: [Float] = getAudioChunk()
+let energy = recognizer.calculateEnergy(chunk)  // Returns RMS energy
+print("Chunk energy: \(energy)")
+
+// Check if chunk has sufficient energy (not silence)
+if recognizer.hasSufficientEnergy(chunk) {
+    print("Chunk has speech")
+} else {
+    print("Chunk is silence")
+}
+
+// Customize energy threshold (default: 0.01)
+recognizer.energyThreshold = 0.02  // Higher = more aggressive silence filtering
+
+// addAudioChunk returns whether chunk was processed
+let processed = try recognizer.addAudioChunk(chunk)
+if processed {
+    print("Chunk processed")
+} else {
+    print("Chunk skipped (low energy)")
+}
 ```
 
 ### Error Handling
@@ -300,13 +367,25 @@ do {
 
 ## Testing
 
-The test suite automatically downloads the model on first run (takes a few minutes):
+The test suite includes:
+- **File Transcription/Translation Tests**: Test batch processing of complete audio files
+- **Streaming Tests**: Test real-time streaming with 1-second audio chunks
+  - Sends audio in 1s increments (16000 samples at 16kHz)
+  - Automatically skips low-energy chunks (silence detection)
+  - Polls `getNewSegment()` which returns a single segment or `nil`
+  - Validates the expanding window approach with segment repetition detection
+- **Energy Detection Tests**: Test silence detection and energy calculation
+  - Validates RMS energy calculation
+  - Tests automatic skipping of low-energy chunks
+  - Verifies custom energy threshold configuration
+
+The tests automatically download the large-v2 model on first run (takes a few minutes):
 
 ```bash
 swift test
 ```
 
-The model is cached in `Tests/Models/whisper-medium-ct2` and reused for subsequent test runs.
+The model is cached in `Tests/Models/whisper-large-v2-ct2` and reused for subsequent test runs.
 
 ### Running Tests Serially
 

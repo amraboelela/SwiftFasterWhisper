@@ -29,6 +29,10 @@ public final class StreamingRecognizer {
     private let modelPath: String
     private var isStreaming = false
 
+    /// Energy threshold for detecting silence (RMS below this value will be skipped)
+    /// Default: 0.01 (adjust based on your audio levels)
+    public var energyThreshold: Float = 0.01
+
     /// Delegate for receiving streaming callbacks
     public weak var delegate: (any StreamingRecognizerDelegate)?
 
@@ -87,9 +91,12 @@ public final class StreamingRecognizer {
 
     /// Add an audio chunk for processing
     /// Call this repeatedly with 1-second audio chunks (16000 samples at 16kHz)
+    /// Low-energy chunks (silence) are automatically skipped based on energyThreshold
     /// - Parameter chunk: Audio samples (16kHz mono float32, recommended size: 16000 samples = 1 second)
     /// - Throws: `RecognitionError` if streaming is not active
-    public func addAudioChunk(_ chunk: [Float]) throws {
+    /// - Returns: Boolean indicating whether chunk was processed (false if skipped due to low energy)
+    @discardableResult
+    public func addAudioChunk(_ chunk: [Float]) throws -> Bool {
         guard let handle = modelHandle else {
             throw RecognitionError.modelNotLoaded
         }
@@ -99,7 +106,12 @@ public final class StreamingRecognizer {
         }
 
         guard !chunk.isEmpty else {
-            return
+            return false
+        }
+
+        // Skip low-energy chunks (silence)
+        if !hasSufficientEnergy(chunk) {
+            return false
         }
 
         chunk.withUnsafeBufferPointer { buffer in
@@ -109,12 +121,37 @@ public final class StreamingRecognizer {
                 UInt(chunk.count)
             )
         }
+
+        return true
+    }
+
+    /// Calculate RMS (Root Mean Square) energy of an audio chunk
+    /// - Parameter chunk: Audio samples
+    /// - Returns: RMS energy value
+    public func calculateEnergy(_ chunk: [Float]) -> Float {
+        guard !chunk.isEmpty else { return 0.0 }
+
+        let sumOfSquares = chunk.reduce(0.0) { $0 + ($1 * $1) }
+        return sqrt(sumOfSquares / Float(chunk.count))
+    }
+
+    /// Check if audio chunk has sufficient energy (not silence)
+    /// - Parameter chunk: Audio samples
+    /// - Returns: True if energy is above threshold, false if silence
+    public func hasSufficientEnergy(_ chunk: [Float]) -> Bool {
+        return calculateEnergy(chunk) >= energyThreshold
     }
 
     /// Poll for a new transcription segment
     /// Call this periodically (e.g., every 100-500ms) to check for a new stable segment
     /// - Returns: A new segment if one is ready, or nil if no segment is available yet
     /// - Throws: `RecognitionError` if streaming is not active
+    ///
+    /// **Behavior:**
+    /// - Returns only **new** segments that haven't been returned before
+    /// - Does **not** return duplicate segments
+    /// - Returns `nil` if no new segment is ready yet
+    /// - Expanding window emits one stable segment at a time when detected via repetition
     public func getNewSegment() throws -> TranscriptionSegment? {
         guard let handle = modelHandle else {
             throw RecognitionError.modelNotLoaded
