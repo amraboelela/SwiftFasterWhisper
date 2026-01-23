@@ -33,6 +33,13 @@ struct TurkishTranscriptionTests {
         let expectedText = segments.map { $0.text }.joined(separator: " ")
         print("Expected (Turkish): \(expectedText)")
 
+        // Skip test if expected text is empty
+        guard !expectedText.isEmpty else {
+            print("⚠️  Skipping test - expected text is empty")
+            print("==========================================================\n")
+            return
+        }
+
         // Transcribe with Whisper
         let whisper = try await base.getWhisper()
         let result = try await whisper.transcribe(

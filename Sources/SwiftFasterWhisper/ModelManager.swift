@@ -113,7 +113,6 @@ public struct ModelManager {
 
         // Check if model already exists
         if modelExists(name: size.directoryName) {
-            print("✅ Using existing \(size.rawValue) model at \(modelDir.path)")
             return modelDir
         }
 
