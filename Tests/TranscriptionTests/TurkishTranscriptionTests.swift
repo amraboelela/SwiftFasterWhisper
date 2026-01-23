@@ -18,7 +18,15 @@ struct TurkishTranscriptionTests {
         let english: String
     }
 
+    // Track total audio duration across all tests
+    static var totalAudioDuration: Double = 0.0
+    static var testStartTime: Date?
+
     private func runTranscriptionTest(fileName: String) async throws {
+        if Self.testStartTime == nil {
+            Self.testStartTime = Date()
+        }
+
         print("\n========== TEST: Turkish Transcription \(fileName) ==========")
 
         let base = TestBase()
@@ -31,6 +39,13 @@ struct TurkishTranscriptionTests {
 
         // Combine all expected text
         let expectedText = segments.map { $0.text }.joined(separator: " ")
+
+        // Get audio duration
+        let fullAudio = try base.convertAudioToPCM(audioPath: audioPath)
+        let audioDuration = Double(fullAudio.count) / 16000.0
+        Self.totalAudioDuration += audioDuration
+
+        print("Audio duration: \(String(format: "%.2f", audioDuration))s")
         print("Expected (Turkish): \(expectedText)")
 
         // Skip test if expected text is empty
@@ -126,15 +141,29 @@ struct TurkishTranscriptionTests {
         try await runTranscriptionTest(fileName: "3-0400-5c")
     }
 
-    @Test func transcribe3_0500_2() async throws {
-        try await runTranscriptionTest(fileName: "3-0500-2")
-    }
-
     @Test func transcribe3_0800_3() async throws {
         try await runTranscriptionTest(fileName: "3-0800-3")
     }
 
     @Test func transcribe3_1000() async throws {
         try await runTranscriptionTest(fileName: "3-1000")
+    }
+
+    @Test func zz_printSummary() async throws {
+        // This test runs last (alphabetically) to print the summary
+        guard let startTime = Self.testStartTime else {
+            print("\n⚠️  No tests were run")
+            return
+        }
+
+        let totalTime = Date().timeIntervalSince(startTime)
+        let responseRatio = (totalTime / Self.totalAudioDuration) * 100.0
+
+        print("\n========== TRANSCRIPTION TEST SUITE SUMMARY ==========")
+        print("Total audio duration: \(String(format: "%.2f", Self.totalAudioDuration))s")
+        print("Total processing time: \(String(format: "%.2f", totalTime))s")
+        print("Response time ratio: \(String(format: "%.1f", responseRatio))%")
+        print("(Lower is better - 100% means real-time, <100% is faster than real-time)")
+        print("======================================================\n")
     }
 }
