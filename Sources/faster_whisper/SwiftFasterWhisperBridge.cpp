@@ -22,8 +22,9 @@
 
 // Global map to store streaming buffers for each model
 static std::map<WhisperModelHandle, std::shared_ptr<StreamingBuffer>> streaming_buffers;
-static std::map<WhisperModelHandle, std::vector<Segment>> streaming_segments_cache;
 static std::map<WhisperModelHandle, std::string> streaming_language;
+static std::map<WhisperModelHandle, std::string> streaming_task;  // "transcribe" or "translate"
+static std::map<WhisperModelHandle, size_t> last_transcribed_position;  // Track last transcribed window position
 
 // Common hallucination phrases to filter out
 static bool isHallucination(const std::string& text) {
@@ -40,6 +41,13 @@ static bool isHallucination(const std::string& text) {
     static const std::vector<std::string> hallucinations = {
         "see you in next video",
         "see you in the next",
+        "see you in the next video",
+        "see you in the next video.",
+        "i hope you enjoyed this video",
+        "hope you enjoyed this video",
+        "i hope you enjoyed this video.",
+        "hope you enjoyed this video.",
+        "i hope you enjoyed",
         "subscribe",
         "don't forget to subscribe",
         "like and subscribe",
@@ -62,26 +70,37 @@ static bool isHallucination(const std::string& text) {
         "translated by",
         "-thank you.",
         "translation by",
+        "translation and translation by",
         "subtitle by",
         "subtitled by",
         "-goodbye.",
         "bye!",
         "please subscribe",
         "i'm sorry, i'm sorry",
+        "come on, come on",
+        "come on, come on.",
         "-come on. -come on.",
         "-turkish. -turkish.",
         "-i'm sorry. -it's okay.",
         "-let's go. -let's go.",
-        ".",
-        "?",
-        "!",
-        "...",
+        "to be continued",
         "subtitle",
         "subtitles",
         "captions",
         // Turkish-specific hallucinations
         "altyazı",
-        "m.k."
+        "m.k.",
+        // Profanity filters
+        "asshole",
+        "assholes",
+        "fuck",
+        "fucking",
+        "shit",
+        "damn",
+        "bitch",
+        "bastard",
+        "crap",
+        "hell"
     };
 
     // Exact matches only for potentially ambiguous words
@@ -89,7 +108,11 @@ static bool isHallucination(const std::string& text) {
         "bye",
         "goodbye",
         "thank you",
-        "the end"
+        "the end",
+        ".",
+        "?",
+        "!",
+        "..."
     };
 
     // Check for exact matches or if text starts with common patterns
@@ -266,8 +289,9 @@ void whisper_destroy_model(WhisperModelHandle model) {
     if (model) {
         // Clean up streaming resources if any
         streaming_buffers.erase(model);
-        streaming_segments_cache.erase(model);
         streaming_language.erase(model);
+        streaming_task.erase(model);
+        last_transcribed_position.erase(model);
 
         delete static_cast<WhisperModel*>(model);
     }
@@ -388,16 +412,18 @@ TranscriptionResult whisper_translate(
 
 void whisper_start_streaming(
     WhisperModelHandle model,
-    const char* language
+    const char* language,
+    const char* task
 ) {
     if (!model) {
         return;
     }
 
-    // Create streaming buffer for this model
-    streaming_buffers[model] = std::make_shared<StreamingBuffer>(30, 16000);  // 30 seconds buffer for better context
-    streaming_segments_cache[model] = std::vector<Segment>();
+    // Create streaming buffer with 4-second sliding window (3.5s shifts)
+    streaming_buffers[model] = std::make_shared<StreamingBuffer>(16000);
     streaming_language[model] = language ? std::string(language) : "";
+    streaming_task[model] = task ? std::string(task) : "transcribe";
+    last_transcribed_position[model] = SIZE_MAX;  // Initialize to invalid position
 }
 
 void whisper_add_audio_chunk(
@@ -437,22 +463,49 @@ TranscriptionSegment* whisper_get_new_segments(
 
     auto buffer = buffer_it->second;
 
-    // Check if ready to decode
+    // Check if we have a full 4-second window ready
     if (!buffer->is_ready_to_decode()) {
         return nullptr;
     }
 
+    // Only transcribe if window position has changed since last transcription
+    size_t current_position = buffer->window_position();
+    if (last_transcribed_position[model] == current_position) {
+        return nullptr;  // Already transcribed at this position
+    }
+
+    // Mark this position as transcribed BEFORE we actually transcribe
+    // This prevents multiple transcriptions of the same window
+    last_transcribed_position[model] = current_position;
+
     try {
         auto* whisper_model = static_cast<WhisperModel*>(model);
 
-        // Get current buffer (full audio from beginning)
-        std::vector<float> audio = buffer->get_buffer();
+        // Get 4-second window from current position
+        std::vector<float> window_audio = buffer->get_window();
 
-        // Transcribe full buffer from beginning
+        if (window_audio.empty()) {
+            // Not enough audio for a full window
+            return nullptr;
+        }
+
+        // Transcribe or translate the 4-second window
         std::optional<std::string> lang = streaming_language[model].empty() ?
             std::nullopt : std::optional<std::string>(streaming_language[model]);
 
-        auto [segments, info] = whisper_model->transcribe(audio, lang, true);
+        std::string task = streaming_task[model];
+        std::vector<Segment> segments;
+        TranscriptionInfo info;
+
+        if (task == "translate") {
+            auto [trans_segs, trans_info] = whisper_model->translate(window_audio, lang);
+            segments = trans_segs;
+            info = trans_info;
+        } else {
+            auto [trans_segs, trans_info] = whisper_model->transcribe(window_audio, lang, true);
+            segments = trans_segs;
+            info = trans_info;
+        }
 
         // Filter out hallucinations
         std::vector<Segment> filtered_segments;
@@ -473,42 +526,41 @@ TranscriptionSegment* whisper_get_new_segments(
             }
         }
 
-        // Get previous segments
-        std::vector<Segment>& prev_segments = streaming_segments_cache[model];
+        // Emit all non-hallucination segments immediately
+        if (!filtered_segments.empty()) {
+            // Trim to last segment end minus 0.5s safety margin
+            // This keeps a 0.5s overlap to prevent missing audio at segment boundaries
+            float last_segment_end = filtered_segments.back().end;
+            float trim_time = last_segment_end - 0.5f;  // Safety margin
 
-        // Check if first segment is stable (same as previous first segment)
-        std::vector<Segment> stable_segments;
-
-        if (!prev_segments.empty() && !filtered_segments.empty()) {
-            // Compare first segment only
-            if (filtered_segments[0].text == prev_segments[0].text) {
-                // First segment is stable - emit it!
-                stable_segments.push_back(filtered_segments[0]);
+            // Ensure we don't trim negative amount
+            if (trim_time > 0.0f) {
+                size_t trim_samples = static_cast<size_t>(trim_time * 16000);
+                buffer->trim_samples(trim_samples);
             }
+
+            // Reset transcribed position since we trimmed (buffer reset to position 0)
+            last_transcribed_position[model] = SIZE_MAX;
+        } else {
+            // No segments (all hallucinations) - trim buffer by 3.5s to prevent accumulation
+            size_t trim_samples = 56000;  // 3.5 seconds at 16kHz
+            if (buffer->size() >= trim_samples) {
+                buffer->trim_samples(trim_samples);
+            }
+
+            // Reset transcribed position since we trimmed
+            last_transcribed_position[model] = SIZE_MAX;
         }
 
-        // Update cache with current filtered segments
-        streaming_segments_cache[model] = filtered_segments;
-
-        // If first segment is stable, emit and advance window
-        if (!stable_segments.empty()) {
-            float segment_end = stable_segments[0].end;
-            size_t trim_samples = static_cast<size_t>(segment_end * 16000);
-            buffer->trim_samples(trim_samples);
-
-            // Clear cache - next transcription starts fresh
-            streaming_segments_cache[model].clear();
-        }
-
-        // Allocate and copy stable segments
-        *count = stable_segments.size();
+        // Allocate and copy all filtered segments
+        *count = filtered_segments.size();
         if (*count > 0) {
             TranscriptionSegment* result = static_cast<TranscriptionSegment*>(
                 malloc(*count * sizeof(TranscriptionSegment))
             );
 
-            for (size_t i = 0; i < stable_segments.size(); ++i) {
-                const auto& seg = stable_segments[i];
+            for (size_t i = 0; i < filtered_segments.size(); ++i) {
+                const auto& seg = filtered_segments[i];
 
                 // Allocate and copy text
                 result[i].text = static_cast<char*>(malloc(seg.text.length() + 1));
@@ -535,8 +587,9 @@ void whisper_stop_streaming(WhisperModelHandle model) {
 
     // Clean up streaming resources
     streaming_buffers.erase(model);
-    streaming_segments_cache.erase(model);
     streaming_language.erase(model);
+    streaming_task.erase(model);
+    last_transcribed_position.erase(model);
 }
 
 void whisper_free_transcription_result(TranscriptionResult result) {

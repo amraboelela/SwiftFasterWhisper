@@ -153,24 +153,13 @@ WhisperModel::WhisperModel(
   // Initialize tokenizer placeholder
   hf_tokenizer = nullptr;
 
-  // -------------------
-  // Tokenizer Handling
-  // -------------------
-  // In Python: tokenizers.Tokenizer.from_file("tokenizer.json")
-  // In C++: you must implement or use a tokenizer wrapper
-  std::string tokenizer_file = model_path + "/tokenizer.json";
-  if (std::filesystem::exists(tokenizer_file)) {
-    std::cout << "Found tokenizer.json" << std::endl;
-  } else {
-    std::cerr << "Tokenizer not found, defaulting to fallback.\n";
-  }
-
-  // Load vocabulary file once and cache it (ALWAYS, regardless of tokenizer)
+  // Load vocabulary file once and cache it
   std::string vocab_file_txt = model_path + "/vocabulary.txt";
   std::string vocab_file_json = model_path + "/vocabulary.json";
 
   std::ifstream vocab_stream(vocab_file_txt);
   bool is_json = false;
+
   if (!vocab_stream.is_open()) {
     vocab_stream.open(vocab_file_json);
     is_json = true;
@@ -183,7 +172,6 @@ WhisperModel::WhisperModel(
         ctranslate2::Vocabulary::from_text_file(vocab_stream)
     );
     vocab_stream.close();
-    std::cout << "✅ Cached vocabulary with " << vocabulary_->size() << " tokens" << std::endl;
   } else {
     throw std::runtime_error("Failed to load vocabulary file (tried both vocabulary.txt and vocabulary.json)");
   }
@@ -251,7 +239,7 @@ std::tuple<std::vector<Segment>, TranscriptionInfo> WhisperModel::transcribe(
     throw std::runtime_error("Failed to extract features from audio");
   }
 
-  std::cout << "Features shape: ((" << features.size() << ", " << features[0].size() << "))" << std::endl;
+  std::cout << "🔄 Transcribing 4s window..." << std::endl;
 
   // Log feature statistics for debugging (commented out for production)
   /*

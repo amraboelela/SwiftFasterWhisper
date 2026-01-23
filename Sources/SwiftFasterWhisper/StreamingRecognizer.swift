@@ -29,8 +29,10 @@ public final class StreamingRecognizer {
     private let modelPath: String
     private var isStreaming = false
 
-    /// Energy threshold for detecting silence (RMS below this value will be skipped)
+    /// Energy threshold for manual silence detection (not used internally)
     /// Default: 0.01 (adjust based on your audio levels)
+    /// Typical values: silence < 0.01, background noise ~0.015, speech > 0.02
+    /// Use with calculateEnergy() and hasSufficientEnergy() for custom filtering
     public var energyThreshold: Float = 0.01
 
     /// Delegate for receiving streaming callbacks
@@ -73,10 +75,12 @@ public final class StreamingRecognizer {
 
     // MARK: - Streaming Control
 
-    /// Start streaming transcription
-    /// - Parameter language: Optional language code (nil for auto-detection)
+    /// Start streaming transcription or translation
+    /// - Parameters:
+    ///   - language: Optional language code (nil for auto-detection)
+    ///   - task: Task type - "transcribe" (default) or "translate"
     /// - Throws: `RecognitionError` if streaming start fails
-    public func startStreaming(language: String? = nil) throws {
+    public func startStreaming(language: String? = nil, task: String = "transcribe") throws {
         guard let handle = modelHandle else {
             throw RecognitionError.modelNotLoaded
         }
@@ -85,18 +89,16 @@ public final class StreamingRecognizer {
             return  // Already streaming
         }
 
-        whisper_start_streaming(handle, language)
+        whisper_start_streaming(handle, language, task)
         isStreaming = true
     }
 
     /// Add an audio chunk for processing
-    /// Call this repeatedly with 1-second audio chunks (16000 samples at 16kHz)
-    /// Low-energy chunks (silence) are automatically skipped based on energyThreshold
-    /// - Parameter chunk: Audio samples (16kHz mono float32, recommended size: 16000 samples = 1 second)
+    /// Call this repeatedly with audio chunks (recommended: 0.5-second chunks = 8000 samples at 16kHz)
+    /// Internally uses a 4-second sliding window
+    /// - Parameter chunk: Audio samples (16kHz mono float32, any size but 8000 samples recommended)
     /// - Throws: `RecognitionError` if streaming is not active
-    /// - Returns: Boolean indicating whether chunk was processed (false if skipped due to low energy)
-    @discardableResult
-    public func addAudioChunk(_ chunk: [Float]) throws -> Bool {
+    public func addAudioChunk(_ chunk: [Float]) throws {
         guard let handle = modelHandle else {
             throw RecognitionError.modelNotLoaded
         }
@@ -106,12 +108,7 @@ public final class StreamingRecognizer {
         }
 
         guard !chunk.isEmpty else {
-            return false
-        }
-
-        // Skip low-energy chunks (silence)
-        if !hasSufficientEnergy(chunk) {
-            return false
+            return
         }
 
         chunk.withUnsafeBufferPointer { buffer in
@@ -121,8 +118,6 @@ public final class StreamingRecognizer {
                 UInt(chunk.count)
             )
         }
-
-        return true
     }
 
     /// Calculate RMS (Root Mean Square) energy of an audio chunk
@@ -143,15 +138,15 @@ public final class StreamingRecognizer {
     }
 
     /// Poll for a new transcription segment
-    /// Call this periodically (e.g., every 100-500ms) to check for a new stable segment
+    /// Call this periodically (e.g., every 100-500ms) to check for a new segment
     /// - Returns: A new segment if one is ready, or nil if no segment is available yet
     /// - Throws: `RecognitionError` if streaming is not active
     ///
     /// **Behavior:**
-    /// - Returns only **new** segments that haven't been returned before
-    /// - Does **not** return duplicate segments
+    /// - Returns segments immediately when transcribed (no duplicate detection)
+    /// - Filters out hallucinations automatically
     /// - Returns `nil` if no new segment is ready yet
-    /// - Expanding window emits one stable segment at a time when detected via repetition
+    /// - May return multiple segments at once if transcription produces multiple segments
     public func getNewSegment() throws -> TranscriptionSegment? {
         guard let handle = modelHandle else {
             throw RecognitionError.modelNotLoaded
@@ -169,7 +164,7 @@ public final class StreamingRecognizer {
         }
         defer { whisper_free_segments(segments, count) }
 
-        // Return only the first segment (expanding window emits one stable segment at a time)
+        // Return first segment (may have multiple, but Swift API returns one at a time)
         let segment = segments[0]
         let text = segment.text != nil ? String(cString: segment.text) : ""
         return TranscriptionSegment(

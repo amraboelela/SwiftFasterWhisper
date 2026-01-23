@@ -16,38 +16,36 @@ struct StreamingTranslationTests {
         let base = TestBase()
         let modelPath = try await base.downloadModelIfNeeded()
 
-        print("\n========== STREAMING TRANSLATION TEST (Turkish → English, 1s chunks) ==========")
+        print("\n========== STREAMING TRANSLATION TEST (Turkish → English, 0.5s chunks) ==========")
 
         let audioPath = try base.findTestFile("05-speech.wav")
         let fullAudio = try base.convertAudioToPCM(audioPath: audioPath)
 
+        print("Audio file: \(audioPath)")
         print("Full audio duration: \(String(format: "%.2f", Double(fullAudio.count) / 16000.0))s")
 
         let recognizer = StreamingRecognizer(modelPath: modelPath)
         try recognizer.loadModel()
-        try recognizer.startStreaming(language: "tr")  // Note: Translation in streaming not yet implemented
+        try recognizer.startStreaming(language: "tr", task: "translate")
 
-        let chunkSize = 16000  // 1 second
+        let chunkSize = 8000  // 0.5 seconds (16000 samples/sec)
         var allSegments: [String] = []
         var offset = 0
 
-        print("\n--- Sending 1s audio chunks ---")
+        print("\n--- Sending 0.5s audio chunks ---")
 
         while offset < fullAudio.count {
             let end = min(offset + chunkSize, fullAudio.count)
             let chunk = Array(fullAudio[offset..<end])
 
-            print("\n[Chunk \(offset / chunkSize + 1)] Sending \(String(format: "%.2f", Float(chunk.count) / 16000.0))s")
+            print("[Chunk \(offset / chunkSize + 1)] Sending \(String(format: "%.2f", Float(chunk.count) / 16000.0))s")
 
             try recognizer.addAudioChunk(chunk)
 
-            // Poll for new segment (returns single segment or nil)
             if let segment = try recognizer.getNewSegment() {
                 let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 print("📤 Received segment: '\(text)'")
                 allSegments.append(text)
-            } else {
-                print("⏳ No segment ready yet")
             }
 
             offset = end
@@ -62,54 +60,51 @@ struct StreamingTranslationTests {
 
         recognizer.stopStreaming()
 
-        let fullText = allSegments.joined(separator: " ")
-        print("\n========== STREAMING RESULTS ==========")
-        print("Total segments: \(allSegments.count)")
-        print("Full translation: \(fullText)")
-        print("===================================================\n")
+        let fullText = allSegments.joined(separator: " ").lowercased()
 
-        // Note: For now this tests transcription (not translation) in streaming mode
-        // Translation support in streaming will be added later
         let expectedTurkish = "Kuraklık yüzünden yeterince ot bitmiyor. Biz de boyayı sulandırmak zorunda kaldık. Canlı başla uğraşıyoruz ama anca bu kadar oluyor."
-        let comparison = base.compareWithReference(generated: fullText, expected: expectedTurkish)
+        let expectedEnglish = "we've had enough of the drought. we had to water the plant. we're trying our best but that's all we can do."
+        let comparison = base.compareWithReference(generated: fullText, expected: expectedEnglish)
 
         print("========== ACCURACY ANALYSIS ==========")
-        print("Expected: \(expectedTurkish)")
-        print("Generated: \(fullText)")
+        print("Turkish: \(expectedTurkish)")
+        print("Expected (English): \(expectedEnglish)")
+        print("Generated (Whisper): \(fullText)")
         print("\nMetrics:")
         print("  Accuracy: \(String(format: "%.2f", comparison.accuracy))%")
         print("=======================================\n")
 
         #expect(comparison.accuracy > 30.0,
-            "Streaming accuracy should be greater than 30%. Got \(String(format: "%.2f", comparison.accuracy))%")
+            "Streaming translation accuracy should be greater than 30%. Got \(String(format: "%.2f", comparison.accuracy))%")
     }
 
-    @Test func streamTranslateTurkish06WithChunks() async throws {
+    @Test func streamTranslateTurkish3_0100_4WithChunks() async throws {
         let base = TestBase()
         let modelPath = try await base.downloadModelIfNeeded()
 
-        print("\n========== STREAMING TRANSLATION TEST (Turkish 06 → English, 1s chunks) ==========")
+        print("\n========== STREAMING TRANSLATION TEST (Turkish 3-0100-4 → English, 0.5s chunks) ==========")
 
-        let audioPath = try base.findTestFile("06-speech.wav")
+        let audioPath = try base.findTestFile("turkish_segments/3-0100-4.wav")
         let fullAudio = try base.convertAudioToPCM(audioPath: audioPath)
 
+        print("Audio file: \(audioPath)")
         print("Full audio duration: \(String(format: "%.2f", Double(fullAudio.count) / 16000.0))s")
 
         let recognizer = StreamingRecognizer(modelPath: modelPath)
         try recognizer.loadModel()
-        try recognizer.startStreaming(language: "tr")
+        try recognizer.startStreaming(language: "tr", task: "translate")
 
-        let chunkSize = 16000  // 1 second
+        let chunkSize = 8000  // 0.5 seconds (16000 samples/sec)
         var allSegments: [String] = []
         var offset = 0
 
-        print("\n--- Sending 1s audio chunks ---")
+        print("\n--- Sending 0.5s audio chunks ---")
 
         while offset < fullAudio.count {
             let end = min(offset + chunkSize, fullAudio.count)
             let chunk = Array(fullAudio[offset..<end])
 
-            print("\n[Chunk \(offset / chunkSize + 1)] Sending \(String(format: "%.2f", Float(chunk.count) / 16000.0))s")
+            print("[Chunk \(offset / chunkSize + 1)] Sending \(String(format: "%.2f", Float(chunk.count) / 16000.0))s")
 
             try recognizer.addAudioChunk(chunk)
 
@@ -117,8 +112,6 @@ struct StreamingTranslationTests {
                 let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 print("📤 Received segment: '\(text)'")
                 allSegments.append(text)
-            } else {
-                print("⏳ No segment ready yet")
             }
 
             offset = end
@@ -132,52 +125,56 @@ struct StreamingTranslationTests {
 
         recognizer.stopStreaming()
 
-        let fullText = allSegments.joined(separator: " ")
-        print("\n========== STREAMING RESULTS ==========")
-        print("Total segments: \(allSegments.count)")
-        print("Full translation: \(fullText)")
-        print("===================================================\n")
+        let fullText = allSegments.joined(separator: " ").lowercased()
 
-        let expectedTurkish = "Çivi totunu yapraklarıyla köklerini denediniz mi?"
-        let comparison = base.compareWithReference(generated: fullText, expected: expectedTurkish)
+        let expectedTurkish = "...bir akına bile çıkamadık. Neden? Çünkü Bey'imizin çıbanlı başı dertte.  Bütün oba halkı senin yaşlılığından şikayetçi."
+        let expectedEnglish = "we couldn't even go to an action. why? because our bey's wife is in trouble. the whole tribe is complaining about your old age."
 
         print("========== ACCURACY ANALYSIS ==========")
-        print("Expected: \(expectedTurkish)")
-        print("Generated: \(fullText)")
+        print("Turkish: \(expectedTurkish)")
+        print("Expected (English): \(expectedEnglish)")
+        print("Generated (Whisper): \(fullText)")
+
+        // Fail if no segments generated
+        #expect(!fullText.isEmpty, "No segments generated - all were filtered as hallucinations")
+
+        let comparison = base.compareWithReference(generated: fullText, expected: expectedEnglish)
+
         print("\nMetrics:")
         print("  Accuracy: \(String(format: "%.2f", comparison.accuracy))%")
         print("=======================================\n")
 
-        #expect(comparison.accuracy > 10.0,
-            "Streaming accuracy should be greater than 10%. Got \(String(format: "%.2f", comparison.accuracy))%")
+        #expect(comparison.accuracy > 30.0,
+            "Streaming translation accuracy should be greater than 30%. Got \(String(format: "%.2f", comparison.accuracy))%")
     }
 
     @Test func streamTranslateTurkish12WithChunks() async throws {
         let base = TestBase()
         let modelPath = try await base.downloadModelIfNeeded()
 
-        print("\n========== STREAMING TRANSLATION TEST (Turkish 12 → English, 1s chunks) ==========")
+        print("\n========== STREAMING TRANSLATION TEST (Turkish 12 → English, 0.5s chunks) ==========")
 
         let audioPath = try base.findTestFile("12-speech.wav")
         let fullAudio = try base.convertAudioToPCM(audioPath: audioPath)
 
+        print("Audio file: \(audioPath)")
         print("Full audio duration: \(String(format: "%.2f", Double(fullAudio.count) / 16000.0))s")
 
         let recognizer = StreamingRecognizer(modelPath: modelPath)
         try recognizer.loadModel()
-        try recognizer.startStreaming(language: "tr")
+        try recognizer.startStreaming(language: "tr", task: "translate")
 
-        let chunkSize = 16000  // 1 second
+        let chunkSize = 8000  // 0.5 seconds (16000 samples/sec)
         var allSegments: [String] = []
         var offset = 0
 
-        print("\n--- Sending 1s audio chunks ---")
+        print("\n--- Sending 0.5s audio chunks ---")
 
         while offset < fullAudio.count {
             let end = min(offset + chunkSize, fullAudio.count)
             let chunk = Array(fullAudio[offset..<end])
 
-            print("\n[Chunk \(offset / chunkSize + 1)] Sending \(String(format: "%.2f", Float(chunk.count) / 16000.0))s")
+            print("[Chunk \(offset / chunkSize + 1)] Sending \(String(format: "%.2f", Float(chunk.count) / 16000.0))s")
 
             try recognizer.addAudioChunk(chunk)
 
@@ -185,8 +182,6 @@ struct StreamingTranslationTests {
                 let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 print("📤 Received segment: '\(text)'")
                 allSegments.append(text)
-            } else {
-                print("⏳ No segment ready yet")
             }
 
             offset = end
@@ -200,23 +195,25 @@ struct StreamingTranslationTests {
 
         recognizer.stopStreaming()
 
-        let fullText = allSegments.joined(separator: " ")
-        print("\n========== STREAMING RESULTS ==========")
-        print("Total segments: \(allSegments.count)")
-        print("Full translation: \(fullText)")
-        print("===================================================\n")
+        let fullText = allSegments.joined(separator: " ").lowercased()
 
         let expectedTurkish = "Başka bir çare bulmalıyız. Çok arıyorum."
-        let comparison = base.compareWithReference(generated: fullText, expected: expectedTurkish)
+        let expectedEnglish = "we have to find another way. i'm looking very hard."
+
+        // Fail if no segments generated
+        #expect(!fullText.isEmpty, "No segments generated - all were filtered as hallucinations")
+
+        let comparison = base.compareWithReference(generated: fullText, expected: expectedEnglish)
 
         print("========== ACCURACY ANALYSIS ==========")
-        print("Expected: \(expectedTurkish)")
-        print("Generated: \(fullText)")
+        print("Turkish: \(expectedTurkish)")
+        print("Expected (English): \(expectedEnglish)")
+        print("Generated (Whisper): \(fullText)")
         print("\nMetrics:")
         print("  Accuracy: \(String(format: "%.2f", comparison.accuracy))%")
         print("=======================================\n")
 
-        #expect(comparison.accuracy > 10.0,
-            "Streaming accuracy should be greater than 10%. Got \(String(format: "%.2f", comparison.accuracy))%")
+        #expect(comparison.accuracy > 30.0,
+            "Streaming translation accuracy should be greater than 30%. Got \(String(format: "%.2f", comparison.accuracy))%")
     }
 }

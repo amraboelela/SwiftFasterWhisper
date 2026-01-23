@@ -16,11 +16,12 @@ struct StreamingTranscriptionTests {
         let base = TestBase()
         let modelPath = try await base.downloadModelIfNeeded()
 
-        print("\n========== STREAMING TEST (English, 1s chunks) ==========")
+        print("\n========== STREAMING TEST (English, 0.5s chunks) ==========")
 
         let audioPath = try base.findTestFile("jfk.wav")
         let fullAudio = try base.convertAudioToPCM(audioPath: audioPath)
 
+        print("Audio file: \(audioPath)")
         print("Full audio duration: \(String(format: "%.2f", Double(fullAudio.count) / 16000.0))s")
         print("Total samples: \(fullAudio.count)")
 
@@ -28,42 +29,30 @@ struct StreamingTranscriptionTests {
         try recognizer.loadModel()
         try recognizer.startStreaming(language: "en")
 
-        let chunkSize = 16000  // 1 second at 16kHz
+        let chunkSize = 8000  // 0.5 seconds (16000 samples/sec)
         var allSegments: [String] = []
         var offset = 0
 
-        print("\n--- Sending 1s audio chunks ---")
+        print("\n--- Sending 0.5s audio chunks ---")
 
         while offset < fullAudio.count {
             let end = min(offset + chunkSize, fullAudio.count)
             let chunk = Array(fullAudio[offset..<end])
 
-            let energy = recognizer.calculateEnergy(chunk)
-            print("\n[Chunk \(offset / chunkSize + 1)] Energy: \(String(format: "%.6f", energy)), Sending \(String(format: "%.2f", Float(chunk.count) / 16000.0))s of audio")
+            print("[Chunk \(offset / chunkSize + 1)] Sending \(String(format: "%.2f", Float(chunk.count) / 16000.0))s")
 
-            let processed = try recognizer.addAudioChunk(chunk)
+            try recognizer.addAudioChunk(chunk)
 
-            if !processed {
-                print("⏭️  Skipped (low energy)")
-                offset = end
-                continue
-            }
-
-            // Poll for new segment
             if let segment = try recognizer.getNewSegment() {
                 let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 print("📤 Received segment: '\(text)'")
-                print("   Timing: \(String(format: "%.2f", segment.start))s - \(String(format: "%.2f", segment.end))s")
                 allSegments.append(text)
-            } else {
-                print("⏳ No segment ready yet (nil returned)")
             }
 
             offset = end
         }
 
         // Final poll after all audio
-        print("\n--- Final poll after all audio sent ---")
         if let segment = try recognizer.getNewSegment() {
             let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
             print("📤 Final segment: '\(text)'")
@@ -73,10 +62,6 @@ struct StreamingTranscriptionTests {
         recognizer.stopStreaming()
 
         let fullText = allSegments.joined(separator: " ").lowercased()
-        print("\n========== STREAMING RESULTS ==========")
-        print("Total segments received: \(allSegments.count)")
-        print("Full transcription: \(fullText)")
-        print("=======================================\n")
 
         let expectedText = "and so my fellow americans ask not what your country can do for you ask what you can do for your country"
         let comparison = base.compareWithReference(generated: fullText, expected: expectedText)
@@ -98,45 +83,36 @@ struct StreamingTranscriptionTests {
         let base = TestBase()
         let modelPath = try await base.downloadModelIfNeeded()
 
-        print("\n========== STREAMING TEST (Turkish, 1s chunks) ==========")
+        print("\n========== STREAMING TEST (Turkish, 0.5s chunks) ==========")
 
         let audioPath = try base.findTestFile("05-speech.wav")
         let fullAudio = try base.convertAudioToPCM(audioPath: audioPath)
 
+        print("Audio file: \(audioPath)")
         print("Full audio duration: \(String(format: "%.2f", Double(fullAudio.count) / 16000.0))s")
 
         let recognizer = StreamingRecognizer(modelPath: modelPath)
         try recognizer.loadModel()
         try recognizer.startStreaming(language: "tr")
 
-        let chunkSize = 16000  // 1 second
+        let chunkSize = 8000  // 0.5 seconds (16000 samples/sec)
         var allSegments: [String] = []
         var offset = 0
 
-        print("\n--- Sending 1s audio chunks ---")
+        print("\n--- Sending 0.5s audio chunks ---")
 
         while offset < fullAudio.count {
             let end = min(offset + chunkSize, fullAudio.count)
             let chunk = Array(fullAudio[offset..<end])
 
-            let energy = recognizer.calculateEnergy(chunk)
-            print("\n[Chunk \(offset / chunkSize + 1)] Energy: \(String(format: "%.6f", energy)), Sending \(String(format: "%.2f", Float(chunk.count) / 16000.0))s")
+            print("[Chunk \(offset / chunkSize + 1)] Sending \(String(format: "%.2f", Float(chunk.count) / 16000.0))s")
 
-            let processed = try recognizer.addAudioChunk(chunk)
+            try recognizer.addAudioChunk(chunk)
 
-            if !processed {
-                print("⏭️  Skipped (low energy)")
-                offset = end
-                continue
-            }
-
-            // Poll for new segment (returns single segment or nil)
             if let segment = try recognizer.getNewSegment() {
                 let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 print("📤 Received segment: '\(text)'")
                 allSegments.append(text)
-            } else {
-                print("⏳ No segment ready yet")
             }
 
             offset = end
@@ -152,10 +128,6 @@ struct StreamingTranscriptionTests {
         recognizer.stopStreaming()
 
         let fullText = allSegments.joined(separator: " ")
-        print("\n========== STREAMING RESULTS ==========")
-        print("Total segments: \(allSegments.count)")
-        print("Full text: \(fullText)")
-        print("=======================================\n")
 
         let expectedTurkish = "Kuraklık yüzünden yeterince ot bitmiyor. Biz de boyayı sulandırmak zorunda kaldık. Canlı başla uğraşıyoruz ama anca bu kadar oluyor."
         let comparison = base.compareWithReference(generated: fullText, expected: expectedTurkish)

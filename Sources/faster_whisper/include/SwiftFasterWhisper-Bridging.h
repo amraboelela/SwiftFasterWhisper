@@ -69,7 +69,8 @@ TranscriptionResult whisper_translate(
 // Streaming transcription functions
 void whisper_start_streaming(
     WhisperModelHandle model,
-    const char* language  // NULL for auto-detect
+    const char* language,  // NULL for auto-detect
+    const char* task       // "transcribe" or "translate", NULL defaults to "transcribe"
 );
 
 void whisper_add_audio_chunk(

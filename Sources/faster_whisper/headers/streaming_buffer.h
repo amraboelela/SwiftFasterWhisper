@@ -11,36 +11,35 @@
 #include <vector>
 #include <cstddef>
 
-/// StreamingBuffer manages a rolling audio buffer for real-time transcription
-/// Supports adding audio chunks and maintaining a sliding window for decoding
+/// StreamingBuffer manages a rolling 4-second audio buffer for real-time transcription
+/// Supports adding audio chunks and maintaining a sliding window (4s window, 3.5s shift)
 class StreamingBuffer {
 public:
     /// Constructor
-    /// @param buffer_seconds Maximum buffer duration in seconds (default: 30)
     /// @param sample_rate Audio sample rate in Hz (default: 16000)
-    explicit StreamingBuffer(size_t buffer_seconds = 30, size_t sample_rate = 16000);
+    explicit StreamingBuffer(size_t sample_rate = 16000);
 
     /// Add an audio chunk to the buffer
     /// @param chunk Audio samples to add
     void add_chunk(const std::vector<float> &chunk);
 
-    /// Get the current buffer contents for transcription
-    /// @return Vector of audio samples
-    std::vector<float> get_buffer() const;
+    /// Get a 4-second window from the current position for transcription
+    /// @return Vector of audio samples (4 seconds worth)
+    std::vector<float> get_window() const;
 
-    /// Update the time cursor after emitting segments
-    /// @param time Time in seconds of the last emitted segment
-    void update_cursor(float time);
-
-    /// Check if buffer is ready for decoding
-    /// @return true if buffer has enough audio for decoding
+    /// Check if buffer has enough audio for a 4-second window
+    /// @return true if buffer has at least 4 seconds from current window position
     bool is_ready_to_decode() const;
 
-    /// Get the current time cursor
-    /// @return Time cursor in seconds
-    float get_cursor() const;
+    /// Slide the window forward by 3.5 seconds
+    void slide_window();
 
-    /// Reset the buffer and cursor
+    /// Trim samples from the beginning of the buffer after emitting a segment
+    /// Also resets window position to 0
+    /// @param samples Number of samples to remove from the beginning
+    void trim_samples(size_t samples);
+
+    /// Reset the buffer and window position
     void reset();
 
     /// Get buffer size in samples
@@ -51,16 +50,17 @@ public:
     /// @return Duration in seconds
     float duration() const;
 
-    /// Trim samples from the beginning of the buffer (after emitting segments)
-    /// @param samples Number of samples to remove from the beginning
-    void trim_samples(size_t samples);
+    /// Get current window start position
+    /// @return Window start position in samples
+    size_t window_position() const;
 
 private:
-    std::vector<float> buffer_;          // Rolling audio buffer
-    size_t buffer_size_samples_;         // Maximum buffer size in samples
-    size_t sample_rate_;                 // Audio sample rate
-    float emitted_time_cursor_;          // Track what's been emitted (in seconds)
-    size_t min_decode_samples_;          // Minimum samples needed to decode
+    std::vector<float> buffer_;          // Accumulated audio buffer
+    size_t sample_rate_;                 // Audio sample rate (16000 Hz)
+    size_t window_start_;                // Current window start position (in samples)
+
+    static constexpr size_t WINDOW_SIZE_SAMPLES = 64000;  // 4 seconds at 16kHz
+    static constexpr size_t SLIDE_SIZE_SAMPLES = 56000;   // 3.5 seconds at 16kHz
 };
 
 #endif // STREAMING_BUFFER_H
