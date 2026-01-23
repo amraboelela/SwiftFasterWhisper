@@ -16,11 +16,127 @@
 #include <map>
 #include <vector>
 #include <memory>
+#include <algorithm>
+#include <sstream>
+#include <set>
 
 // Global map to store streaming buffers for each model
 static std::map<WhisperModelHandle, std::shared_ptr<StreamingBuffer>> streaming_buffers;
 static std::map<WhisperModelHandle, std::vector<Segment>> streaming_segments_cache;
 static std::map<WhisperModelHandle, std::string> streaming_language;
+
+// Common hallucination phrases to filter out
+static bool isHallucination(const std::string& text) {
+    std::string lowercased = text;
+    std::transform(lowercased.begin(), lowercased.end(), lowercased.begin(), ::tolower);
+
+    // Trim whitespace
+    size_t start = lowercased.find_first_not_of(" \t\n\r");
+    size_t end = lowercased.find_last_not_of(" \t\n\r");
+    if (start == std::string::npos) return true; // Empty or all whitespace
+    lowercased = lowercased.substr(start, end - start + 1);
+
+    // Common hallucination patterns for silence/background noise
+    static const std::vector<std::string> hallucinations = {
+        "see you in next video",
+        "see you in the next",
+        "subscribe",
+        "don't forget to subscribe",
+        "like and subscribe",
+        "thanks for watching",
+        "thank you for watching",
+        "bye bye",
+        "- bye.",
+        "bye.",
+        "-i'm going.",
+        "for example.",
+        "see you.",
+        "-what? -what?",
+        "wow.",
+        "see you later",
+        "see you next time",
+        "music",
+        "applause",
+        "laughter",
+        "silence",
+        "translated by",
+        "-thank you.",
+        "translation by",
+        "subtitle by",
+        "subtitled by",
+        "-goodbye.",
+        "bye!",
+        "please subscribe",
+        "i'm sorry, i'm sorry",
+        "-come on. -come on.",
+        "-turkish. -turkish.",
+        "-i'm sorry. -it's okay.",
+        "-let's go. -let's go.",
+        ".",
+        "?",
+        "!",
+        "...",
+        "subtitle",
+        "subtitles",
+        "captions",
+        // Turkish-specific hallucinations
+        "altyazı",
+        "m.k."
+    };
+
+    // Exact matches only for potentially ambiguous words
+    static const std::vector<std::string> exactMatches = {
+        "bye",
+        "goodbye",
+        "thank you",
+        "the end"
+    };
+
+    // Check for exact matches or if text starts with common patterns
+    for (const auto& hallucination : hallucinations) {
+        if (lowercased == hallucination || lowercased.find(hallucination) == 0) {
+            return true;
+        }
+    }
+
+    // Check for exact matches only (not prefix)
+    for (const auto& exactMatch : exactMatches) {
+        if (lowercased == exactMatch) {
+            return true;
+        }
+    }
+
+    // Filter very short outputs (likely hallucinations)
+    if (lowercased.length() <= 2) {
+        return true;
+    }
+
+    // Filter repetitive patterns (e.g., "a a a a")
+    std::istringstream iss(lowercased);
+    std::vector<std::string> words;
+    std::string word;
+    while (iss >> word) {
+        words.push_back(word);
+    }
+
+    if (words.size() > 1) {
+        std::set<std::string> uniqueWords(words.begin(), words.end());
+        // If most words are the same, likely a hallucination
+        if (static_cast<double>(uniqueWords.size()) / words.size() < 0.5) {
+            return true;
+        }
+    }
+
+    // Filter bracketed annotations like (music), [laughter], (footsteps), *door closes*, -The End-
+    if ((lowercased.front() == '(' && lowercased.back() == ')') ||
+        (lowercased.front() == '[' && lowercased.back() == ']') ||
+        (lowercased.front() == '*' && lowercased.back() == '*') ||
+        (lowercased.front() == '-' && lowercased.back() == '-')) {
+        return true;
+    }
+
+    return false;
+}
 
 extern "C" {
 
@@ -338,22 +454,41 @@ TranscriptionSegment* whisper_get_new_segments(
 
         auto [segments, info] = whisper_model->transcribe(audio, lang, true);
 
+        // Filter out hallucinations
+        std::vector<Segment> filtered_segments;
+        for (const auto& seg : segments) {
+            std::string trimmed_text = seg.text;
+            // Trim whitespace
+            size_t start = trimmed_text.find_first_not_of(" \t\n\r");
+            size_t end = trimmed_text.find_last_not_of(" \t\n\r");
+            if (start != std::string::npos && end != std::string::npos) {
+                trimmed_text = trimmed_text.substr(start, end - start + 1);
+            }
+
+            // Skip hallucinations
+            if (!isHallucination(trimmed_text)) {
+                filtered_segments.push_back(seg);
+            } else {
+                std::cout << "⚠️  Filtered hallucination: \"" << trimmed_text << "\"" << std::endl;
+            }
+        }
+
         // Get previous segments
         std::vector<Segment>& prev_segments = streaming_segments_cache[model];
 
         // Check if first segment is stable (same as previous first segment)
         std::vector<Segment> stable_segments;
 
-        if (!prev_segments.empty() && !segments.empty()) {
+        if (!prev_segments.empty() && !filtered_segments.empty()) {
             // Compare first segment only
-            if (segments[0].text == prev_segments[0].text) {
+            if (filtered_segments[0].text == prev_segments[0].text) {
                 // First segment is stable - emit it!
-                stable_segments.push_back(segments[0]);
+                stable_segments.push_back(filtered_segments[0]);
             }
         }
 
-        // Update cache with current segments
-        streaming_segments_cache[model] = segments;
+        // Update cache with current filtered segments
+        streaming_segments_cache[model] = filtered_segments;
 
         // If first segment is stable, emit and advance window
         if (!stable_segments.empty()) {
