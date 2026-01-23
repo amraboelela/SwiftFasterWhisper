@@ -82,52 +82,42 @@ Or add it via Xcode: **File > Add Packages...**
 
 ### Model Setup
 
-SwiftFasterWhisper requires a CTranslate2-format Whisper model. You have two options:
+SwiftFasterWhisper automatically downloads models on first use. Models are stored in `~/Library/Application Support/SwiftFasterWhisper/`.
 
-#### Option 1: Automatic Download (Recommended for Apps)
+#### Option 1: Automatic Download (Recommended)
 
-Add a helper to download the model on first launch:
+No setup needed! Just initialize and load:
 
 ```swift
 import SwiftFasterWhisper
 
-func getModelPath() async throws -> String {
-    let fileManager = FileManager.default
-    let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-    let modelDir = appSupport.appendingPathComponent("whisper-models/medium-ct2")
+// Initialize with default medium model
+let whisper = SwiftFasterWhisper()
+try await whisper.loadModel()  // Automatically downloads on first use
 
-    // Check if already downloaded
-    if fileManager.fileExists(atPath: modelDir.path) {
-        let configFile = modelDir.appendingPathComponent("config.json")
-        if fileManager.fileExists(atPath: configFile.path) {
-            return modelDir.path
-        }
-    }
+// Or choose a different model size
+let whisper = SwiftFasterWhisper(modelSize: .small)
+try await whisper.loadModel()
 
-    // Download pre-converted CTranslate2 model from Hugging Face
-    try fileManager.createDirectory(at: modelDir, withIntermediateDirectories: true)
-
-    let baseURL = "https://huggingface.co/Systran/faster-whisper-medium/resolve/main"
-    let files = ["config.json", "model.bin", "vocabulary.json", "tokenizer.json"]
-
-    for fileName in files {
-        let remoteURL = URL(string: "\(baseURL)/\(fileName)")!
-        let localFileURL = modelDir.appendingPathComponent(fileName)
-
-        let (tempURL, _) = try await URLSession.shared.download(from: remoteURL)
-        try fileManager.moveItem(at: tempURL, to: localFileURL)
-    }
-
-    return modelDir.path
+// Optional: Track download progress
+whisper.downloadProgressCallback = { fileName, progress, downloaded, total in
+    print("Downloading \(fileName): \(Int(progress * 100))%")
 }
-
-// Usage in your app
-let modelPath = try await getModelPath()
-let whisper = SwiftFasterWhisper(modelPath: modelPath)
-try whisper.loadModel()
 ```
 
-#### Option 2: Manual Conversion
+**Environment Variables:**
+- `WHISPER_MODEL_PATH`: Override auto-download with custom Whisper model path
+
+#### Option 2: Custom Model Path
+
+If you've already converted a model or want to use a specific location:
+
+```swift
+let whisper = SwiftFasterWhisper(modelPath: "/path/to/your/whisper-model")
+try await whisper.loadModel()
+```
+
+#### Option 3: Manual Conversion
 
 If you prefer to convert the model yourself:
 
@@ -202,7 +192,7 @@ let result = try await whisper.transcribe(
 
 ### Translation (Any Language → English)
 
-**Note:** Translation uses Whisper's built-in translation capability, which can be slower than transcription and may be less accurate depending on the source language. For best results, use `large-v2` model.
+**Note:** Translation uses Whisper's built-in translation capability, which can be slower than transcription and may be less accurate depending on the source language. For best results, use `large-v2` or `medium` model.
 
 ```swift
 // Translate Spanish to English
@@ -365,6 +355,38 @@ do {
 }
 ```
 
+### Model Management
+
+SwiftFasterWhisper provides utilities for managing downloaded models:
+
+```swift
+import SwiftFasterWhisper
+
+// Check if a model exists
+let exists = ModelManager.modelExists(name: "whisper-medium-ct2")
+
+// Get disk space used by all models
+let totalSize = try ModelManager.getModelsSize()
+print("Models use \(totalSize / 1024 / 1024) MB")
+
+// Clear all downloaded models (free up disk space)
+try ModelManager.clearAllModels()
+
+// Get models directory path
+let modelsDir = try ModelManager.defaultModelsDirectory()
+print("Models stored at: \(modelsDir.path)")
+```
+
+**Available Model Sizes:**
+
+```swift
+WhisperModelSize.tiny      // ~75 MB   - Fastest, basic quality
+WhisperModelSize.base      // ~140 MB  - Fast, good quality
+WhisperModelSize.small     // ~460 MB  - Medium speed, better quality
+WhisperModelSize.medium    // ~1.5 GB  - Slower, recommended quality
+WhisperModelSize.largeV2   // ~3 GB    - Slowest, best quality
+```
+
 ## Testing
 
 The test suite includes:
@@ -378,14 +400,15 @@ The test suite includes:
   - Validates RMS energy calculation
   - Tests automatic skipping of low-energy chunks
   - Verifies custom energy threshold configuration
+- **Turkish Audio Tests**: Test transcription and translation with Turkish audio segments from Ertugrul series
 
-The tests automatically download the large-v2 model on first run (takes a few minutes):
+The tests automatically download the medium model on first run (takes a few minutes):
 
 ```bash
 swift test
 ```
 
-The model is cached in `Tests/Models/whisper-large-v2-ct2` and reused for subsequent test runs.
+The model is cached in `~/Library/Application Support/SwiftFasterWhisper/` and reused for subsequent test runs.
 
 ### Running Tests Serially
 

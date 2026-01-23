@@ -10,14 +10,14 @@ import AVFoundation
 @testable import SwiftFasterWhisper
 
 // Actor to manage shared model instance safely in async contexts
-actor ModelManager {
+actor TestModelManager {
     private var sharedWhisper: SwiftFasterWhisper?
 
-    func getWhisper(modelPath: String) throws -> SwiftFasterWhisper {
+    func getWhisper(modelPath: String) async throws -> SwiftFasterWhisper {
         if sharedWhisper == nil {
-            print("Initializing SwiftFasterWhisper with large-v2 model...")
+            print("Initializing SwiftFasterWhisper with medium model...")
             let instance = SwiftFasterWhisper(modelPath: modelPath)
-            try instance.loadModel()
+            try await instance.loadModel()
             sharedWhisper = instance
         }
         return sharedWhisper!
@@ -28,9 +28,8 @@ class TestBase {
     let timeout: TimeInterval = 300
 
     // Shared model manager across all tests
-    private static let modelManager = ModelManager()
+    private static let modelManager = TestModelManager()
 
-    // Access the shared instance
     func getWhisper() async throws -> SwiftFasterWhisper {
         let modelPath = try await downloadModelIfNeeded()
         return try await TestBase.modelManager.getWhisper(modelPath: modelPath)
@@ -167,105 +166,8 @@ class TestBase {
     // MARK: - Model Management
 
     func downloadModelIfNeeded() async throws -> String {
-        let fileManager = FileManager.default
-
-        let projectRoot = projectRootURL()
-        let modelsDir = projectRoot.appendingPathComponent("Tests").appendingPathComponent("Models")
-        let modelURL = modelsDir.appendingPathComponent("whisper-large-v2-ct2")
-
-        try fileManager.createDirectory(
-            at: modelsDir,
-            withIntermediateDirectories: true
-        )
-
-        // Required model files for CTranslate2
-        let requiredFiles = ["config.json", "model.bin", "vocabulary.txt"]
-        var missingFiles: [String] = []
-
-        // Check which files are missing
-        try fileManager.createDirectory(at: modelURL, withIntermediateDirectories: true)
-
-        for fileName in requiredFiles {
-            let filePath = modelURL.appendingPathComponent(fileName)
-            if !fileManager.fileExists(atPath: filePath.path) {
-                missingFiles.append(fileName)
-            }
-        }
-
-        // If model.bin exists and is valid, we're good
-        let modelBin = modelURL.appendingPathComponent("model.bin")
-        if fileManager.fileExists(atPath: modelBin.path) {
-            let attributes = try fileManager.attributesOfItem(atPath: modelBin.path)
-            let fileSize = attributes[.size] as? Int64 ?? 0
-
-            // CTranslate2 large-v2 float16 model should be ~3GB
-            if fileSize > 2_000_000_000 && missingFiles.isEmpty {
-                print("✅ Using existing CTranslate2 model at \(modelURL.path)")
-                return modelURL.path
-            } else if fileSize > 2_000_000_000 && !missingFiles.isEmpty {
-                print("⚠️ Model exists but missing files: \(missingFiles.joined(separator: ", "))")
-                print("Downloading missing files...")
-            } else if fileSize > 0 {
-                print("⚠️ Model file seems too small (\(fileSize / 1024 / 1024) MB), re-downloading all files...")
-                missingFiles = requiredFiles
-            }
-        } else {
-            print("📥 Downloading Whisper large-v2 model (CTranslate2 format, ~3GB)...")
-            print("This may take several minutes...")
-            missingFiles = requiredFiles
-        }
-
-        // Download missing files from Hugging Face
-        // Using Systran's official faster-whisper models
-        let baseURL = "https://huggingface.co/Systran/faster-whisper-large-v2/resolve/main"
-
-        for fileName in missingFiles {
-            let remoteURL = URL(string: "\(baseURL)/\(fileName)")!
-            let localFileURL = modelURL.appendingPathComponent(fileName)
-
-            print("  Downloading \(fileName)...")
-
-            let (tempURL, response) = try await URLSession.shared.download(from: remoteURL)
-
-            guard let httpResponse = response as? HTTPURLResponse,
-                  httpResponse.statusCode == 200 else {
-                throw NSError(
-                    domain: "TestBase",
-                    code: -10,
-                    userInfo: [NSLocalizedDescriptionKey: "Failed to download \(fileName), HTTP status: \((response as? HTTPURLResponse)?.statusCode ?? -1)"]
-                )
-            }
-
-            // Move downloaded file to final location
-            if fileManager.fileExists(atPath: localFileURL.path) {
-                try fileManager.removeItem(at: localFileURL)
-            }
-            try fileManager.moveItem(at: tempURL, to: localFileURL)
-
-            let attributes = try fileManager.attributesOfItem(atPath: localFileURL.path)
-            let fileSize = attributes[.size] as? Int64 ?? 0
-            print("  ✅ Downloaded \(fileName) (\(fileSize / 1024 / 1024) MB)")
-        }
-
-        // Verify model.bin size if it was downloaded
-        if missingFiles.contains("model.bin") {
-            let attributes = try fileManager.attributesOfItem(atPath: modelBin.path)
-            let downloadedSize = attributes[.size] as? Int64 ?? 0
-
-            guard downloadedSize > 500_000_000 else {
-                throw NSError(
-                    domain: "TestBase",
-                    code: -11,
-                    userInfo: [NSLocalizedDescriptionKey: "Downloaded model file is too small: \(downloadedSize) bytes"]
-                )
-            }
-
-            print("✅ Model downloaded successfully to \(modelURL.path)")
-            print("   Total size: \(downloadedSize / 1024 / 1024) MB")
-        } else {
-            print("✅ Model ready at \(modelURL.path)")
-        }
-
+        // Use ModelManager to download to Application Support
+        let modelURL = try await ModelManager.ensureWhisperModel(size: .medium)
         return modelURL.path
     }
 

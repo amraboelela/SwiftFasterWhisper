@@ -11,17 +11,25 @@ import faster_whisper
 /// Main class for speech recognition and translation using faster-whisper
 public final class SwiftFasterWhisper {
     private var modelHandle: WhisperModelHandle?
-    private let modelPath: String
+    private let customModelPath: String?
+    private let modelSize: WhisperModelSize
+
+    /// Progress callback for model downloads
+    public var downloadProgressCallback: DownloadProgressCallback?
 
     /// Check if model is loaded
     public var isModelLoaded: Bool {
         modelHandle != nil
     }
 
-    /// Initialize with model path
-    /// - Parameter modelPath: Path to the CTranslate2 Whisper model directory
-    public init(modelPath: String) {
-        self.modelPath = modelPath
+    /// Initialize with optional custom model path and size
+    /// If no path is provided, the model will be automatically downloaded on first use
+    /// - Parameters:
+    ///   - modelPath: Optional path to the CTranslate2 Whisper model directory
+    ///   - modelSize: Size of Whisper model to use (default: medium)
+    public init(modelPath: String? = nil, modelSize: WhisperModelSize = .medium) {
+        self.customModelPath = modelPath
+        self.modelSize = modelSize
     }
 
     deinit {
@@ -31,21 +39,82 @@ public final class SwiftFasterWhisper {
     }
 
     /// Load the Whisper model
+    /// If no custom path was provided during init, downloads the model automatically
     /// - Throws: `RecognitionError` if model loading fails
-    public func loadModel() throws {
-        guard !modelPath.isEmpty else {
-            throw RecognitionError.invalidModelPath
+    public func loadModel() async throws {
+        let modelURL: URL
+
+        if let customPath = customModelPath {
+            modelURL = URL(fileURLWithPath: customPath)
+        } else {
+            modelURL = try await ModelManager.ensureWhisperModel(
+                size: modelSize,
+                progressCallback: downloadProgressCallback
+            )
         }
 
-        let handle = whisper_create_model(modelPath)
+        let handle = whisper_create_model(modelURL.path)
         guard handle != nil else {
-            throw RecognitionError.modelLoadFailed("Failed to create model from path: \(modelPath)")
+            throw RecognitionError.modelLoadFailed("Failed to create model from path: \(modelURL.path)")
         }
 
         self.modelHandle = handle
     }
 
-    // MARK: - Batch Transcription
+    // MARK: - Translation
+
+    /// Translate audio from a file path to English using Whisper's built-in translation
+    /// - Parameters:
+    ///   - audioFilePath: Path to audio file (WAV format recommended)
+    ///   - sourceLanguage: Optional source language code (nil for auto-detection)
+    /// - Returns: Translation result with segments and metadata
+    /// - Throws: `RecognitionError` if translation fails
+    public func translate(audioFilePath: String, sourceLanguage: String? = nil) async throws -> TranscriptionResult {
+        guard let handle = modelHandle else {
+            throw RecognitionError.modelNotLoaded
+        }
+
+        // Load audio
+        let audioArray = whisper_load_audio(audioFilePath)
+        guard audioArray.data != nil, audioArray.length > 0 else {
+            throw RecognitionError.invalidAudioData
+        }
+        defer { whisper_free_float_array(audioArray) }
+
+        // Convert to Float array
+        let audioFloat = Array(UnsafeBufferPointer(start: audioArray.data, count: Int(audioArray.length)))
+
+        return try await translate(audio: audioFloat, sourceLanguage: sourceLanguage)
+    }
+
+    /// Translate audio from float array to English using Whisper's built-in translation
+    /// - Parameters:
+    ///   - audio: Audio samples (16kHz mono float32)
+    ///   - sourceLanguage: Optional source language code (nil for auto-detection)
+    /// - Returns: Translation result with segments and metadata
+    /// - Throws: `RecognitionError` if translation fails
+    public func translate(audio: [Float], sourceLanguage: String? = nil) async throws -> TranscriptionResult {
+        guard let handle = modelHandle else {
+            throw RecognitionError.modelNotLoaded
+        }
+
+        guard !audio.isEmpty else {
+            throw RecognitionError.invalidAudioData
+        }
+
+        // Use Whisper's built-in translation
+        let result = audio.withUnsafeBufferPointer { buffer in
+            whisper_translate(
+                handle,
+                buffer.baseAddress,
+                UInt(audio.count),
+                sourceLanguage
+            )
+        }
+        defer { whisper_free_transcription_result(result) }
+
+        return try convertToSwiftResult(result)
+    }
 
     /// Transcribe audio from a file path
     /// - Parameters:
@@ -98,66 +167,6 @@ public final class SwiftFasterWhisper {
                 buffer.baseAddress,
                 UInt(audio.count),
                 language
-            )
-        }
-        defer { whisper_free_transcription_result(result) }
-
-        return try convertToSwiftResult(result)
-    }
-
-    // MARK: - Translation
-
-    /// Translate audio from a file path to English
-    /// - Parameters:
-    ///   - audioFilePath: Path to audio file (WAV format recommended)
-    ///   - sourceLanguage: Optional source language code (nil for auto-detection)
-    /// - Returns: Translation result with segments and metadata
-    /// - Throws: `RecognitionError` if translation fails
-    public func translate(audioFilePath: String, sourceLanguage: String? = nil) async throws -> TranscriptionResult {
-        guard let handle = modelHandle else {
-            throw RecognitionError.modelNotLoaded
-        }
-
-        // Load audio
-        let audioArray = whisper_load_audio(audioFilePath)
-        guard audioArray.data != nil, audioArray.length > 0 else {
-            throw RecognitionError.invalidAudioData
-        }
-        defer { whisper_free_float_array(audioArray) }
-
-        // Translate
-        let result = whisper_translate(
-            handle,
-            audioArray.data,
-            audioArray.length,
-            sourceLanguage
-        )
-        defer { whisper_free_transcription_result(result) }
-
-        return try convertToSwiftResult(result)
-    }
-
-    /// Translate audio from float array to English
-    /// - Parameters:
-    ///   - audio: Audio samples (16kHz mono float32)
-    ///   - sourceLanguage: Optional source language code (nil for auto-detection)
-    /// - Returns: Translation result with segments and metadata
-    /// - Throws: `RecognitionError` if translation fails
-    public func translate(audio: [Float], sourceLanguage: String? = nil) async throws -> TranscriptionResult {
-        guard let handle = modelHandle else {
-            throw RecognitionError.modelNotLoaded
-        }
-
-        guard !audio.isEmpty else {
-            throw RecognitionError.invalidAudioData
-        }
-
-        let result = audio.withUnsafeBufferPointer { buffer in
-            whisper_translate(
-                handle,
-                buffer.baseAddress,
-                UInt(audio.count),
-                sourceLanguage
             )
         }
         defer { whisper_free_transcription_result(result) }

@@ -279,7 +279,7 @@ void whisper_start_streaming(
     }
 
     // Create streaming buffer for this model
-    streaming_buffers[model] = std::make_shared<StreamingBuffer>(3, 16000);  // 3 seconds buffer
+    streaming_buffers[model] = std::make_shared<StreamingBuffer>(30, 16000);  // 30 seconds buffer for better context
     streaming_segments_cache[model] = std::vector<Segment>();
     streaming_language[model] = language ? std::string(language) : "";
 }
@@ -329,40 +329,51 @@ TranscriptionSegment* whisper_get_new_segments(
     try {
         auto* whisper_model = static_cast<WhisperModel*>(model);
 
-        // Get current buffer
+        // Get current buffer (full audio from beginning)
         std::vector<float> audio = buffer->get_buffer();
 
-        // Transcribe
+        // Transcribe full buffer from beginning
         std::optional<std::string> lang = streaming_language[model].empty() ?
             std::nullopt : std::optional<std::string>(streaming_language[model]);
 
         auto [segments, info] = whisper_model->transcribe(audio, lang, true);
 
-        // Filter new segments based on cursor
-        float cursor = buffer->get_cursor();
-        std::vector<Segment> new_segments;
+        // Get previous segments
+        std::vector<Segment>& prev_segments = streaming_segments_cache[model];
 
-        for (const auto& seg : segments) {
-            if (seg.start >= cursor) {
-                new_segments.push_back(seg);
+        // Check if first segment is stable (same as previous first segment)
+        std::vector<Segment> stable_segments;
+
+        if (!prev_segments.empty() && !segments.empty()) {
+            // Compare first segment only
+            if (segments[0].text == prev_segments[0].text) {
+                // First segment is stable - emit it!
+                stable_segments.push_back(segments[0]);
             }
         }
 
-        // Update cursor to the end of the last segment
-        if (!new_segments.empty()) {
-            float last_end = new_segments.back().end;
-            buffer->update_cursor(last_end);
+        // Update cache with current segments
+        streaming_segments_cache[model] = segments;
+
+        // If first segment is stable, emit and advance window
+        if (!stable_segments.empty()) {
+            float segment_end = stable_segments[0].end;
+            size_t trim_samples = static_cast<size_t>(segment_end * 16000);
+            buffer->trim_samples(trim_samples);
+
+            // Clear cache - next transcription starts fresh
+            streaming_segments_cache[model].clear();
         }
 
-        // Allocate and copy new segments
-        *count = new_segments.size();
+        // Allocate and copy stable segments
+        *count = stable_segments.size();
         if (*count > 0) {
             TranscriptionSegment* result = static_cast<TranscriptionSegment*>(
                 malloc(*count * sizeof(TranscriptionSegment))
             );
 
-            for (size_t i = 0; i < new_segments.size(); ++i) {
-                const auto& seg = new_segments[i];
+            for (size_t i = 0; i < stable_segments.size(); ++i) {
+                const auto& seg = stable_segments[i];
 
                 // Allocate and copy text
                 result[i].text = static_cast<char*>(malloc(seg.text.length() + 1));

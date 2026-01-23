@@ -205,6 +205,7 @@ private:
   std::shared_ptr<tokenizers::Tokenizer> hf_tokenizer;
   FeatureExtractor feature_extractor;
   std::string model_path_;  // Store model path for vocabulary loading
+  std::unique_ptr<ctranslate2::Vocabulary> vocabulary_;  // Cached vocabulary
   int input_stride;
   int num_samples_per_token;
   int frames_per_second;

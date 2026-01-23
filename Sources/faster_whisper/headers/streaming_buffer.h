@@ -16,9 +16,9 @@
 class StreamingBuffer {
 public:
     /// Constructor
-    /// @param buffer_seconds Maximum buffer duration in seconds (default: 3)
+    /// @param buffer_seconds Maximum buffer duration in seconds (default: 30)
     /// @param sample_rate Audio sample rate in Hz (default: 16000)
-    explicit StreamingBuffer(size_t buffer_seconds = 3, size_t sample_rate = 16000);
+    explicit StreamingBuffer(size_t buffer_seconds = 30, size_t sample_rate = 16000);
 
     /// Add an audio chunk to the buffer
     /// @param chunk Audio samples to add
@@ -50,6 +50,10 @@ public:
     /// Get buffer duration in seconds
     /// @return Duration in seconds
     float duration() const;
+
+    /// Trim samples from the beginning of the buffer (after emitting segments)
+    /// @param samples Number of samples to remove from the beginning
+    void trim_samples(size_t samples);
 
 private:
     std::vector<float> buffer_;          // Rolling audio buffer

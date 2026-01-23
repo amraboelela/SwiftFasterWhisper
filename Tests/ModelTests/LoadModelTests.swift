@@ -19,7 +19,7 @@ struct LoadModelTests {
 
         #expect(!recognizer.isModelLoaded, "Model should not be loaded initially")
 
-        try recognizer.loadModel()
+        try await recognizer.loadModel()
         #expect(recognizer.isModelLoaded, "Model should be loaded after loadModel()")
         print("✅ Model loaded successfully from \(modelPath)")
     }
@@ -28,7 +28,7 @@ struct LoadModelTests {
         let invalidRecognizer = SwiftFasterWhisper(modelPath: "/nonexistent/path")
 
         do {
-            try invalidRecognizer.loadModel()
+            try await invalidRecognizer.loadModel()
             Issue.record("Should have thrown RecognitionError")
         } catch is RecognitionError {
             // Expected error

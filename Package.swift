@@ -1,13 +1,8 @@
 // swift-tools-version: 5.9
 import PackageDescription
 
-let cTranslate2HeadersPath: String
-let ctranslate2Path = "../../Frameworks/CTranslate2.xcframework"
-#if os(macOS)
-cTranslate2HeadersPath = ctranslate2Path + "/macos-arm64/CTranslate2.framework/Headers"
-#else
-cTranslate2HeadersPath = ctranslate2Path + "/ios-arm64/CTranslate2.framework/Headers"
-#endif
+// CTranslate2 framework path
+let ctranslate2Path = "Frameworks/CTranslate2.xcframework"
 
 let package = Package(
     name: "SwiftFasterWhisper",
@@ -39,11 +34,14 @@ let package = Package(
             cxxSettings: [
                 .headerSearchPath("whisper"),
                 .headerSearchPath("headers"),
-                .headerSearchPath(cTranslate2HeadersPath)
+                .headerSearchPath("../../Frameworks/CTranslate2.xcframework/macos-arm64/CTranslate2.framework/Headers"),
+                .unsafeFlags(["-I/opt/homebrew/include"])
             ],
             linkerSettings: [
                 .linkedLibrary("c++"),
-                .linkedLibrary("z")
+                .linkedLibrary("z"),
+                .linkedLibrary("sentencepiece"),
+                .unsafeFlags(["-L/opt/homebrew/lib"])
             ]
         ),
         // Binary framework

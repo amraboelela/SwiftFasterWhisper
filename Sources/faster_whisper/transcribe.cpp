@@ -160,17 +160,32 @@ WhisperModel::WhisperModel(
   // In C++: you must implement or use a tokenizer wrapper
   std::string tokenizer_file = model_path + "/tokenizer.json";
   if (std::filesystem::exists(tokenizer_file)) {
-    // Check vocabulary file and log token count
-    std::string vocab_file = model_path + "/vocabulary.json";
-    std::ifstream vocab_stream(vocab_file);
-    if (vocab_stream.is_open()) {
-      ctranslate2::Vocabulary temp_vocabulary = ctranslate2::Vocabulary::from_json_file(vocab_stream);
-      vocab_stream.close();
-      std::cout << "Loading HuggingFace tokenizer format with " << temp_vocabulary.size() << " tokens" << std::endl;
-      std::cout << "Loaded " << temp_vocabulary.size() << " tokens from vocabulary file" << std::endl;
-    }
+    std::cout << "Found tokenizer.json" << std::endl;
   } else {
     std::cerr << "Tokenizer not found, defaulting to fallback.\n";
+  }
+
+  // Load vocabulary file once and cache it (ALWAYS, regardless of tokenizer)
+  std::string vocab_file_txt = model_path + "/vocabulary.txt";
+  std::string vocab_file_json = model_path + "/vocabulary.json";
+
+  std::ifstream vocab_stream(vocab_file_txt);
+  bool is_json = false;
+  if (!vocab_stream.is_open()) {
+    vocab_stream.open(vocab_file_json);
+    is_json = true;
+  }
+
+  if (vocab_stream.is_open()) {
+    vocabulary_ = std::make_unique<ctranslate2::Vocabulary>(
+      is_json ?
+        ctranslate2::Vocabulary::from_json_file(vocab_stream) :
+        ctranslate2::Vocabulary::from_text_file(vocab_stream)
+    );
+    vocab_stream.close();
+    std::cout << "✅ Cached vocabulary with " << vocabulary_->size() << " tokens" << std::endl;
+  } else {
+    throw std::runtime_error("Failed to load vocabulary file (tried both vocabulary.txt and vocabulary.json)");
   }
 
   // Placeholder for feature_kwargs logic.
@@ -312,49 +327,12 @@ std::tuple<std::vector<Segment>, TranscriptionInfo> WhisperModel::transcribe(
     language_probability = 1;
   }
 
-  // Step 5: Initialize tokenizer with vocabulary from assets (Python line 949-954)
-  // __android_log_print(ANDROID_LOG_DEBUG, "#transcribe", "🔧 TOKENIZER INITIALIZATION DEBUG");
-  // __android_log_print(ANDROID_LOG_DEBUG, "#transcribe", "Creating tokenizer with multilingual=%d, task=transcribe, language=%s",
-  //                     model->is_multilingual(), detected_language.c_str());
-  // __android_log_print(ANDROID_LOG_DEBUG, "#transcribe", "Model path received: '%s'", model_path_.c_str());
-
-  // Load vocabulary from copied assets in internal storage
-  std::string vocab_path = model_path_ + "/vocabulary.json";
-  // __android_log_print(ANDROID_LOG_DEBUG, "#transcribe", "📁 Constructed vocabulary path: '%s'", vocab_path.c_str());
-
-  // Check if vocabulary file exists before trying to load it
-  std::ifstream vocab_check(vocab_path);
-  if (vocab_check.good()) {
-    vocab_check.seekg(0, std::ios::end);
-    size_t file_size = vocab_check.tellg();
-    vocab_check.close();
-    // __android_log_print(ANDROID_LOG_DEBUG, "#transcribe", "✅ Vocabulary file found! Size: %zu bytes", file_size);
-  } else {
-    __android_log_print(ANDROID_LOG_ERROR, "#transcribe", "❌ Vocabulary file NOT FOUND at: %s", vocab_path.c_str());
-    // __android_log_print(ANDROID_LOG_DEBUG, "#transcribe", "📂 Trying to debug what files exist in model directory: %s", model_path_.c_str());
-
-    // Try to check if model directory exists
-    std::ifstream model_dir_test(model_path_ + "/config.json");
-    if (model_dir_test.good()) {
-      // __android_log_print(ANDROID_LOG_DEBUG, "#transcribe", "✅ Model directory exists (found config.json)");
-      model_dir_test.close();
-    } else {
-      __android_log_print(ANDROID_LOG_ERROR, "#transcribe", "❌ Model directory might not exist or be accessible");
-    }
-
-    // __android_log_print(ANDROID_LOG_DEBUG, "#transcribe", "🔍 Model directory existence check completed");
+  // Step 5: Use cached vocabulary for tokenizer initialization
+  if (!vocabulary_) {
+    throw std::runtime_error("Vocabulary not loaded. This should not happen.");
   }
 
-  // Load vocabulary from the model directory
-  std::string vocab_file = model_path_ + "/vocabulary.json";
-
-  std::ifstream vocab_stream(vocab_file);
-  if (!vocab_stream.is_open()) {
-    throw std::runtime_error("Failed to open vocabulary file: " + vocab_file);
-  }
-
-  ctranslate2::Vocabulary vocabulary = ctranslate2::Vocabulary::from_json_file(vocab_stream);
-  vocab_stream.close();
+  const ctranslate2::Vocabulary& vocabulary = *vocabulary_;
 
   // Use the CTranslate2 vocabulary to create the tokenizer
   Tokenizer tokenizer(vocabulary, model->is_multilingual(), task, detected_language);

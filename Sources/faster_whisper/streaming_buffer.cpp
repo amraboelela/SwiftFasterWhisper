@@ -19,18 +19,8 @@ StreamingBuffer::StreamingBuffer(size_t buffer_seconds, size_t sample_rate)
 }
 
 void StreamingBuffer::add_chunk(const std::vector<float> &chunk) {
-    // Add new chunk to buffer
+    // Just accumulate all audio - no sliding window
     buffer_.insert(buffer_.end(), chunk.begin(), chunk.end());
-
-    // If buffer exceeds max size, remove oldest samples
-    if (buffer_.size() > buffer_size_samples_) {
-        size_t excess = buffer_.size() - buffer_size_samples_;
-        buffer_.erase(buffer_.begin(), buffer_.begin() + excess);
-
-        // Update cursor to account for removed samples
-        float removed_time = static_cast<float>(excess) / sample_rate_;
-        emitted_time_cursor_ = std::max(0.0f, emitted_time_cursor_ - removed_time);
-    }
 }
 
 std::vector<float> StreamingBuffer::get_buffer() const {
@@ -60,4 +50,14 @@ size_t StreamingBuffer::size() const {
 
 float StreamingBuffer::duration() const {
     return static_cast<float>(buffer_.size()) / sample_rate_;
+}
+
+void StreamingBuffer::trim_samples(size_t samples) {
+    if (samples >= buffer_.size()) {
+        // Trim everything
+        buffer_.clear();
+    } else {
+        // Remove samples from beginning
+        buffer_.erase(buffer_.begin(), buffer_.begin() + samples);
+    }
 }
