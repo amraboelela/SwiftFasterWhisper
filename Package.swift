@@ -53,15 +53,13 @@ let package = Package(
         .testTarget(
             name: "SwiftFasterWhisperTests",
             dependencies: ["SwiftFasterWhisper"],
-            exclude: [
-                "Models",
-                "test-log.txt"
-            ],
             resources: [
                 .copy("jfk.wav"),
                 .copy("05-speech.wav"),
                 .copy("06-speech.wav"),
-                .copy("12-speech.wav")
+                .copy("12-speech.wav"),
+                .copy("turkish_segments/"),
+                .copy("test.sh")
             ]
         )
     ],
