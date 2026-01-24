@@ -520,7 +520,7 @@ TranscriptionSegment* whisper_get_new_segments(
         }
 
         // Emit all non-hallucination segments immediately
-        // Always trim by 4 seconds for consistent sliding window behavior
+        // Trim by 4 seconds, leaving 0.2s in buffer for overlap with next window
         size_t trim_samples = 64000;  // 4 seconds at 16kHz
         if (buffer->size() >= trim_samples) {
             buffer->trim_samples(trim_samples);

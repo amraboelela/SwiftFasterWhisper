@@ -11,8 +11,8 @@
 #include <vector>
 #include <cstddef>
 
-/// StreamingBuffer manages a rolling 4-second audio buffer for real-time transcription
-/// Supports adding audio chunks and maintaining a sliding window (4s window, 3.5s shift)
+/// StreamingBuffer manages a rolling audio buffer for real-time transcription
+/// Supports adding audio chunks and maintaining a sliding window (4.2s window, 4s shift, 0.2s overlap)
 class StreamingBuffer {
 public:
     /// Constructor
@@ -59,8 +59,8 @@ private:
     size_t sample_rate_;                 // Audio sample rate (16000 Hz)
     size_t window_start_;                // Current window start position (in samples)
 
-    static constexpr size_t WINDOW_SIZE_SAMPLES = 64000;  // 4 seconds at 16kHz
-    static constexpr size_t SLIDE_SIZE_SAMPLES = 56000;   // 3.5 seconds at 16kHz
+    static constexpr size_t WINDOW_SIZE_SAMPLES = 67200;  // 4.2 seconds at 16kHz
+    static constexpr size_t SLIDE_SIZE_SAMPLES = 56000;   // 3.5 seconds at 16kHz (deprecated)
 };
 
 #endif // STREAMING_BUFFER_H
