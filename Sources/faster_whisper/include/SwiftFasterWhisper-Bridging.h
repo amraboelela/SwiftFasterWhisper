@@ -8,6 +8,8 @@
 #ifndef SwiftFasterWhisper_Bridging_h
 #define SwiftFasterWhisper_Bridging_h
 
+#include <stdbool.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif

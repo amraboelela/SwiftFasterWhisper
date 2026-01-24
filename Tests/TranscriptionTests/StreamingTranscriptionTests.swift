@@ -43,20 +43,15 @@ struct StreamingTranscriptionTests {
 
             try recognizer.addAudioChunk(chunk)
 
-            if let segment = try recognizer.getNewSegment() {
+            // Check for new segments (blocking call, returns empty array if not ready)
+            let segments = try recognizer.getNewSegments()
+            for segment in segments {
                 let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 print("📤 Received segment: '\(text)'")
                 allSegments.append(text)
             }
 
             offset = end
-        }
-
-        // Final poll after all audio
-        if let segment = try recognizer.getNewSegment() {
-            let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            print("📤 Final segment: '\(text)'")
-            allSegments.append(text)
         }
 
         recognizer.stopStreaming()
@@ -109,20 +104,15 @@ struct StreamingTranscriptionTests {
 
             try recognizer.addAudioChunk(chunk)
 
-            if let segment = try recognizer.getNewSegment() {
+            // Check for new segments (blocking call, returns empty array if not ready)
+            let segments = try recognizer.getNewSegments()
+            for segment in segments {
                 let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 print("📤 Received segment: '\(text)'")
                 allSegments.append(text)
             }
 
             offset = end
-        }
-
-        // Final poll
-        if let segment = try recognizer.getNewSegment() {
-            let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            print("📤 Final segment: '\(text)'")
-            allSegments.append(text)
         }
 
         recognizer.stopStreaming()
@@ -143,28 +133,28 @@ struct StreamingTranscriptionTests {
             "Turkish streaming accuracy should be greater than 35%. Got \(String(format: "%.2f", comparison.accuracy))%")
     }
 
-    @Test func streamReturnsNilWhenNoSegmentReady() async throws {
+    @Test func streamReturnsEmptyWhenNoSegmentReady() async throws {
         let base = TestBase()
         let modelPath = try await base.downloadModelIfNeeded()
 
-        print("\n========== TEST: getNewSegment() returns nil ==========")
+        print("\n========== TEST: getNewSegments() returns empty array ==========")
 
         let recognizer = StreamingRecognizer(modelPath: modelPath)
         try recognizer.loadModel()
         try recognizer.startStreaming(language: "en")
 
-        // Poll immediately without adding audio - should return nil
-        let segment1 = try recognizer.getNewSegment()
-        print("Poll before any audio: \(segment1 == nil ? "nil ✅" : "segment (unexpected)")")
-        #expect(segment1 == nil, "Should return nil when no audio has been added")
+        // Poll immediately without adding audio - should return empty array
+        let segments1 = try recognizer.getNewSegments()
+        print("Poll before any audio: \(segments1.isEmpty ? "empty array ✅" : "\(segments1.count) segments (unexpected)")")
+        #expect(segments1.isEmpty, "Should return empty array when no audio has been added")
 
         // Add very small chunk (too small for a full segment)
         let smallChunk = [Float](repeating: 0.0, count: 1600)  // 0.1 second
         try recognizer.addAudioChunk(smallChunk)
 
-        let segment2 = try recognizer.getNewSegment()
-        print("Poll after tiny chunk: \(segment2 == nil ? "nil ✅" : "segment")")
-        // May or may not be nil - just testing the API works
+        let segments2 = try recognizer.getNewSegments()
+        print("Poll after tiny chunk: \(segments2.isEmpty ? "empty array ✅" : "\(segments2.count) segments")")
+        // May or may not be empty - just testing the API works
 
         recognizer.stopStreaming()
         print("=======================================================\n")

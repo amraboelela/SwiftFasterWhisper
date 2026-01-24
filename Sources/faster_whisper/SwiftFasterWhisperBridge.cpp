@@ -419,7 +419,7 @@ void whisper_start_streaming(
         return;
     }
 
-    // Create streaming buffer with 4-second sliding window (3.5s shifts)
+    // Create streaming buffer with 4-second sliding window (4s shifts)
     streaming_buffers[model] = std::make_shared<StreamingBuffer>(16000);
     streaming_language[model] = language ? std::string(language) : "";
     streaming_task[model] = task ? std::string(task) : "transcribe";
@@ -483,13 +483,6 @@ TranscriptionSegment* whisper_get_new_segments(
 
         // Get 4-second window from current position
         std::vector<float> window_audio = buffer->get_window();
-
-        if (window_audio.empty()) {
-            // Not enough audio for a full window
-            return nullptr;
-        }
-
-        // Transcribe or translate the 4-second window
         std::optional<std::string> lang = streaming_language[model].empty() ?
             std::nullopt : std::optional<std::string>(streaming_language[model]);
 
@@ -527,30 +520,14 @@ TranscriptionSegment* whisper_get_new_segments(
         }
 
         // Emit all non-hallucination segments immediately
-        if (!filtered_segments.empty()) {
-            // Trim to last segment end minus 0.5s safety margin
-            // This keeps a 0.5s overlap to prevent missing audio at segment boundaries
-            float last_segment_end = filtered_segments.back().end;
-            float trim_time = last_segment_end - 0.5f;  // Safety margin
-
-            // Ensure we don't trim negative amount
-            if (trim_time > 0.0f) {
-                size_t trim_samples = static_cast<size_t>(trim_time * 16000);
-                buffer->trim_samples(trim_samples);
-            }
-
-            // Reset transcribed position since we trimmed (buffer reset to position 0)
-            last_transcribed_position[model] = SIZE_MAX;
-        } else {
-            // No segments (all hallucinations) - trim buffer by 3.5s to prevent accumulation
-            size_t trim_samples = 56000;  // 3.5 seconds at 16kHz
-            if (buffer->size() >= trim_samples) {
-                buffer->trim_samples(trim_samples);
-            }
-
-            // Reset transcribed position since we trimmed
-            last_transcribed_position[model] = SIZE_MAX;
+        // Always trim by 4 seconds for consistent sliding window behavior
+        size_t trim_samples = 64000;  // 4 seconds at 16kHz
+        if (buffer->size() >= trim_samples) {
+            buffer->trim_samples(trim_samples);
         }
+
+        // Reset transcribed position since we trimmed (buffer reset to position 0)
+        last_transcribed_position[model] = SIZE_MAX;
 
         // Allocate and copy all filtered segments
         *count = filtered_segments.size();

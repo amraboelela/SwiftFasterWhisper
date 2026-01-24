@@ -42,20 +42,15 @@ struct StreamingTranslationTests {
 
             try recognizer.addAudioChunk(chunk)
 
-            if let segment = try recognizer.getNewSegment() {
+            // Check for new segments (blocking call, returns empty array if not ready)
+            let segments = try recognizer.getNewSegments()
+            for segment in segments {
                 let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 print("📤 Received segment: '\(text)'")
                 allSegments.append(text)
             }
 
             offset = end
-        }
-
-        // Final poll
-        if let segment = try recognizer.getNewSegment() {
-            let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            print("📤 Final segment: '\(text)'")
-            allSegments.append(text)
         }
 
         recognizer.stopStreaming()
@@ -108,19 +103,15 @@ struct StreamingTranslationTests {
 
             try recognizer.addAudioChunk(chunk)
 
-            if let segment = try recognizer.getNewSegment() {
+            // Check for new segments (blocking call, returns empty array if not ready)
+            let segments = try recognizer.getNewSegments()
+            for segment in segments {
                 let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 print("📤 Received segment: '\(text)'")
                 allSegments.append(text)
             }
 
             offset = end
-        }
-
-        if let segment = try recognizer.getNewSegment() {
-            let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            print("📤 Final segment: '\(text)'")
-            allSegments.append(text)
         }
 
         recognizer.stopStreaming()
@@ -178,19 +169,15 @@ struct StreamingTranslationTests {
 
             try recognizer.addAudioChunk(chunk)
 
-            if let segment = try recognizer.getNewSegment() {
+            // Check for new segments (blocking call, returns empty array if not ready)
+            let segments = try recognizer.getNewSegments()
+            for segment in segments {
                 let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 print("📤 Received segment: '\(text)'")
                 allSegments.append(text)
             }
 
             offset = end
-        }
-
-        if let segment = try recognizer.getNewSegment() {
-            let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            print("📤 Final segment: '\(text)'")
-            allSegments.append(text)
         }
 
         recognizer.stopStreaming()

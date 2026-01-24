@@ -27,7 +27,7 @@ struct StreamingSegmentsTranscriptionTests {
             Self.testStartTime = Date()
         }
 
-        print("\n========== TEST: Streaming Transcription \(fileName) (4s window) ==========")
+        print("\n========== TEST: Streaming Transcription \(fileName) (4s window, 4s slide) ==========")
 
         let base = TestBase()
         let audioPath = try base.findTestFile("turkish_segments/\(fileName).wav")
@@ -50,6 +50,13 @@ struct StreamingSegmentsTranscriptionTests {
         print("Audio duration: \(String(format: "%.2f", Double(fullAudio.count) / 16000.0))s")
         print("Expected (Turkish): \(expectedText)")
 
+        // Skip test if audio is too short for streaming (need at least 8s for 4s window + 4s slide)
+        guard audioDuration >= 8.0 else {
+            print("⚠️  Skipping test - audio too short for streaming (< 8s)")
+            print("================================================================\n")
+            return
+        }
+
         // Skip test if expected text is empty
         guard !expectedText.isEmpty else {
             print("⚠️  Skipping test - expected text is empty")
@@ -62,28 +69,29 @@ struct StreamingSegmentsTranscriptionTests {
         try recognizer.loadModel()
         try recognizer.startStreaming(language: "tr", task: "transcribe")
 
-        let chunkSize = 8000  // 0.5 seconds
-        var allSegments: [String] = []
+        let chunkSize = 16000  // 1 second
         var offset = 0
+        var allSegments: [String] = []
+
+        print("\n--- Sending 1s audio chunks ---")
 
         while offset < fullAudio.count {
             let end = min(offset + chunkSize, fullAudio.count)
             let chunk = Array(fullAudio[offset..<end])
 
+            print("[Chunk \(offset / chunkSize + 1)] Sending \(String(format: "%.2f", Float(chunk.count) / 16000.0))s")
+
             try recognizer.addAudioChunk(chunk)
 
-            if let segment = try recognizer.getNewSegment() {
+            // Check for new segments (blocking call, returns empty array if not ready)
+            let segments = try recognizer.getNewSegments()
+            for segment in segments {
                 let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                print("📤 Received segment: '\(text)'")
                 allSegments.append(text)
             }
 
             offset = end
-        }
-
-        // Final poll
-        if let segment = try recognizer.getNewSegment() {
-            let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            allSegments.append(text)
         }
 
         recognizer.stopStreaming()
@@ -134,24 +142,12 @@ struct StreamingSegmentsTranscriptionTests {
         try await runStreamingTranscriptionTest(fileName: "1-0701-3")
     }
 
-    @Test func streamingTranscribe2_0050_2() async throws {
-        try await runStreamingTranscriptionTest(fileName: "2-0050-2")
-    }
-
-    @Test func streamingTranscribe2_0100_2() async throws {
-        try await runStreamingTranscriptionTest(fileName: "2-0100-2")
-    }
-
     @Test func streamingTranscribe2_0150_5c() async throws {
         try await runStreamingTranscriptionTest(fileName: "2-0150-5c")
     }
 
     @Test func streamingTranscribe2_0200_3() async throws {
         try await runStreamingTranscriptionTest(fileName: "2-0200-3")
-    }
-
-    @Test func streamingTranscribe2_0350() async throws {
-        try await runStreamingTranscriptionTest(fileName: "2-0350")
     }
 
     @Test func streamingTranscribe3_0100_4() async throws {

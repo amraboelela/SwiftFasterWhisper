@@ -2,19 +2,49 @@
 
 A high-performance macOS/iOS Swift framework for real-time speech recognition and translation using the faster-whisper engine (based on CTranslate2).
 
+**Built for developers who want Whisper accuracy without whisper.cpp constraints, using a fully Swift-native API.**
+
+## Quick Start
+
+```swift
+import SwiftFasterWhisper
+
+// Initialize and load model (auto-downloads on first use)
+let whisper = SwiftFasterWhisper()
+try await whisper.loadModel()
+
+// Transcribe audio file
+let result = try await whisper.transcribe(audioFilePath: "audio.wav")
+print(result.text)
+
+// Or stream real-time audio
+let recognizer = StreamingRecognizer(modelPath: modelPath)
+try recognizer.loadModel()
+try recognizer.startStreaming(language: "en")
+
+// Feed 0.5s chunks, get segments automatically
+try recognizer.addAudioChunk(audioChunk)  // Triggers transcription when buffer ready
+if let segment = try await recognizer.getNewSegment() {
+    print(segment.text)
+}
+```
+
 ## Overview
 
 SwiftFasterWhisper provides a Swift-native API for fast, on-device transcription and translation. It wraps the faster-whisper speech recognition engine, offering performance improvements over whisper.cpp while maintaining a clean, Swift-idiomatic interface.
 
 ### Key Features
 
-- **Real-time Streaming**: Process audio in 1-second increments using an expanding window
-- **Incremental Output**: Receive segments as they're transcribed
+- **Real-time Streaming**: Process audio using 4-second sliding window with 0.5-second chunks
+- **Near Real-Time Performance**: CPU-bound; typically ~1.4–1.7× audio duration (e.g., 15s audio processes in ~20-25s)
+- **Event-Driven Architecture**: No polling - transcription triggered automatically when buffer ready
+- **Non-blocking API**: Background transcription with async/await support
+- **Incremental Output**: Receive segments as they're transcribed from thread-safe queue
 - **Multi-language Support**: Transcribe speech in any language
-- **Translation**: Translate from any language to English (slower than transcription, accuracy varies by language)
-- **Swift Concurrency**: Modern async/await and delegate-based APIs
+- **Translation**: Translate from any language to English (quality varies by language)
+- **Swift Concurrency**: Modern async/await and delegate-based APIs with actor-based thread safety
 - **Cancelable Operations**: Stop transcription at any time
-- **High Performance**: Leverages CTranslate2 for optimized inference
+- **High Performance**: Leverages CTranslate2 for optimized inference with parallel processing
 
 ## Architecture
 
@@ -26,24 +56,44 @@ SwiftFasterWhisper provides a Swift-native API for fast, on-device transcription
 
 ### Streaming Approach
 
-SwiftFasterWhisper uses an expanding window streaming strategy with automatic silence detection:
-- Start with 1-second audio window
-- Expand by 1 second each iteration
-- Stop expanding when a stable segment is emitted or max window length is reached (default: 3 seconds)
-- **Automatically skip low-energy chunks (silence)** using RMS energy detection
-- Detect stable segments via repetition (segment appears identically twice in consecutive windows)
-- Emit stable segments and advance window to prevent duplicates
+**TL;DR:**
+- Feed 0.5s audio chunks via `addAudioChunk()`
+- Internally buffers 4s of audio
+- Automatically transcribes when ready (event-driven, no polling)
+- Receive segments via delegate callback or `await getNewSegment()`
 
-**Energy Detection:**
-- Each 1-second chunk is analyzed for energy level before processing
-- Chunks below the energy threshold (default: 0.01 RMS) are skipped as silence
-- Adjustable threshold via `recognizer.energyThreshold` property
-- Saves processing power and improves accuracy by ignoring silence
+---
 
-**Window Management:**
-- Max window length prevents infinite expansion during long silence periods
-- Default max: 3 seconds (configurable in future versions)
-- Window resets after emitting a stable segment
+SwiftFasterWhisper uses an event-driven streaming strategy for real-time transcription:
+
+**Design:**
+- **4-second audio window** for transcription
+- **0.5-second chunks** (8000 samples at 16kHz) recommended for feeding audio
+- **3.5-second shift** between transcriptions (overlapping 0.5s for continuity)
+- **Event-driven transcription**: Triggered inside `addAudioChunk()` when C++ backend signals buffer is ready
+- Segments are queued in a thread-safe actor and retrieved asynchronously
+
+**How It Works:**
+1. User calls `addAudioChunk()` with 0.5s chunks (non-blocking, returns immediately)
+2. C++ accumulates audio in a 4-second sliding window
+3. When window is ready (4s of audio accumulated), `addAudioChunk()` detects this via `whisper_should_transcribe()`
+4. Swift spawns a background task to call C++ transcription (blocking call runs in background)
+5. When transcription completes, segments are:
+   - Added to thread-safe queue (accessible via `await getNewSegment()`)
+   - Delivered to delegate callback (if set)
+6. Window shifts by 3.5 seconds after transcription to maintain continuity
+
+**Event-Driven (No Polling):**
+- Transcription is triggered inside `addAudioChunk()` when the C++ backend signals the buffer is ready
+- When true, spawns background task for transcription
+- No wasteful polling loops - transcription happens exactly when needed
+- Delegate callbacks provide real-time segment delivery
+
+**Performance:**
+- Non-blocking API allows UI updates while transcribing
+- Background tasks enable parallel audio feeding and transcription
+- Thread-safe segment queue using Swift actors
+- Typical response time: ~1.4–1.7× real-time (15s audio: ~20-25s processing)
 
 ## Why SwiftFasterWhisper?
 
@@ -140,26 +190,27 @@ try whisper.loadModel()
 
 ### Available Model Sizes
 
+Model names follow the `Systran/faster-whisper-*` convention on Hugging Face.
+
 | Model | Approx Size (float16) | Speed | Quality |
 |-------|----------------------|-------|---------|
-| tiny | ~70-80 MB | Fastest | Basic |
-| base | ~140-160 MB | Fast | Good |
-| small | ~400-500 MB | Medium | Better |
-| **medium** | ~1.5-2 GB | Slower | **Recommended** |
-| large-v2 | ~3-4 GB | Slowest | Best |
-| large-v3 | ~3-4 GB | Slowest | Best (requires 128 mel bands - not compatible) |
+| tiny | ~75 MB | Fastest | Basic |
+| base | ~140 MB | Fast | Good |
+| small | ~460 MB | Medium | Better |
+| **medium** | **~1.5 GB** | Slower | **Recommended** |
+| large-v2 | ~3.0 GB | Slowest | Best |
 
 **For most apps, use `medium`** - it offers the best balance of quality and performance.
 **For best quality, use `large-v2`** (used in tests).
 
-**Note on large-v3:** This model requires 128 mel band input features. SwiftFasterWhisper currently uses 80-band mel spectrograms (Whisper v1-v2 standard), so large-v3 is not compatible without audio conversion.
+⚠️ **large-v3 is NOT supported**
+It requires 128 mel bands, while SwiftFasterWhisper uses 80-band mel spectrograms (Whisper v1-v2 standard).
 
 To use a different model size, replace `faster-whisper-medium` with:
 - `Systran/faster-whisper-tiny`
 - `Systran/faster-whisper-base`
 - `Systran/faster-whisper-small`
 - `Systran/faster-whisper-large-v2`
-- ~~`Systran/faster-whisper-large-v3`~~ (incompatible - requires 128 mel bands)
 
 ## Usage
 
@@ -234,26 +285,24 @@ let modelPath = try await getModelPath()
 let recognizer = StreamingRecognizer(modelPath: modelPath)
 try recognizer.loadModel()
 
-recognizer.delegate = MyDelegate()
+// Keep strong reference to delegate to prevent deallocation
+let delegate = MyDelegate()
+recognizer.delegate = delegate
 try recognizer.startStreaming(language: "en")
 
-// Optional: Adjust energy threshold for silence detection
-// Default is 0.01 - increase for noisier environments, decrease for quieter audio
-recognizer.energyThreshold = 0.02
-
-// Feed audio chunks (1 second chunks = 16000 samples at 16kHz)
-// Low-energy chunks are automatically skipped
+// Feed audio chunks (0.5 second chunks = 8000 samples at 16kHz recommended)
+// Chunks are accumulated in a 4-second sliding window
 while streaming {
-    let chunk: [Float] = getNextAudioChunk()  // Your audio capture (16000 samples)
-    let processed = try recognizer.addAudioChunk(chunk)  // Returns true if processed, false if skipped
+    let chunk: [Float] = getNextAudioChunk()  // Your audio capture (8000 samples = 0.5s)
+    try recognizer.addAudioChunk(chunk)
 
-    // Poll for new segment every ~500ms
-    if let newSegment = try recognizer.getNewSegment() {
+    // Poll for new segment (non-blocking, retrieves from background queue)
+    if let newSegment = try await recognizer.getNewSegment() {
         print("New segment: \(newSegment.text)")
     }
 }
 
-recognizer.stopStreaming()
+await recognizer.stopStreaming()
 ```
 
 #### Async/Await Pattern
@@ -267,10 +316,10 @@ Task {
     for await chunk in audioStream {  // Your audio stream
         try recognizer.addAudioChunk(chunk)
     }
-    recognizer.stopStreaming()
+    await recognizer.stopStreaming()
 }
 
-// Consume segments
+// Consume segments (non-blocking)
 for try await segment in recognizer.streamingSegments(language: "en") {
     if let segment = segment {
         print("[\(segment.start)s - \(segment.end)s] \(segment.text)")
@@ -281,12 +330,13 @@ for try await segment in recognizer.streamingSegments(language: "en") {
 **Important: `getNewSegment()` Behavior**
 
 The `getNewSegment()` method:
-- Returns **only new segments** that haven't been returned before
+- Returns **only new segments** from the background queue
+- Is **non-blocking** - returns immediately with segment or `nil`
 - Does **not** return duplicate segments (automatic deduplication)
-- Returns `nil` if no new segment is ready yet
-- Expanding window emits one stable segment at a time when repetition is detected
+- Background task handles the blocking transcription calls
+- Thread-safe segment queue using Swift actors
 
-This means you can call it repeatedly without worrying about receiving the same segment twice.
+This means you can call it repeatedly in your main loop without blocking the UI.
 
 ### Working with Segments
 
@@ -307,9 +357,9 @@ print("Detected language: \(result.language)")
 print("Confidence: \(result.languageProbability)")
 ```
 
-### Energy Detection (Streaming)
+### Optional: Manual Energy Detection
 
-For streaming audio, you can control silence detection:
+While streaming automatically processes all chunks in the background, you can still manually check audio energy for custom filtering:
 
 ```swift
 let recognizer = StreamingRecognizer(modelPath: modelPath)
@@ -321,23 +371,18 @@ let energy = recognizer.calculateEnergy(chunk)  // Returns RMS energy
 print("Chunk energy: \(energy)")
 
 // Check if chunk has sufficient energy (not silence)
+// Default threshold: 0.01
 if recognizer.hasSufficientEnergy(chunk) {
     print("Chunk has speech")
 } else {
-    print("Chunk is silence")
+    print("Chunk is silence - skip processing")
 }
 
 // Customize energy threshold (default: 0.01)
-recognizer.energyThreshold = 0.02  // Higher = more aggressive silence filtering
-
-// addAudioChunk returns whether chunk was processed
-let processed = try recognizer.addAudioChunk(chunk)
-if processed {
-    print("Chunk processed")
-} else {
-    print("Chunk skipped (low energy)")
-}
+recognizer.energyThreshold = 0.02  // Higher = more aggressive filtering
 ```
+
+**Note:** These methods are provided for custom filtering but are not used automatically by the streaming engine.
 
 ### Error Handling
 
@@ -391,18 +436,19 @@ WhisperModelSize.largeV2   // ~3 GB    - Slowest, best quality
 
 The test suite includes:
 - **File Transcription/Translation Tests**: Test batch processing of complete audio files
-- **Streaming Tests**: Test real-time streaming with 1-second audio chunks
-  - Sends audio in 1s increments (16000 samples at 16kHz)
-  - Automatically skips low-energy chunks (silence detection)
-  - Polls `getNewSegment()` which returns a single segment or `nil`
-  - Validates the expanding window approach with segment repetition detection
-- **Energy Detection Tests**: Test silence detection and energy calculation
-  - Validates RMS energy calculation
-  - Tests automatic skipping of low-energy chunks
-  - Verifies custom energy threshold configuration
+- **Streaming Tests**: Test real-time streaming with 0.5-second audio chunks
+  - Uses 4-second sliding window with 3.5-second shift
+  - Sends audio in 0.5s increments (8000 samples at 16kHz)
+  - Polls `getNewSegment()` which retrieves segments from background queue
+  - Background transcription runs in parallel with audio feeding
+  - Validates non-blocking async API
+- **Streaming Segments Tests**: Test streaming with Turkish audio segments
+  - Tests files with duration > 7 seconds (minimum for 4s window)
+  - Validates transcription and translation accuracy
+  - Measures response time ratio (processing time / audio duration)
 - **Turkish Audio Tests**: Test transcription and translation with Turkish audio segments from Ertugrul series
 
-The tests automatically download the medium model on first run (takes a few minutes):
+The tests automatically download the large-v2 model on first run (takes a few minutes):
 
 ```bash
 swift test
