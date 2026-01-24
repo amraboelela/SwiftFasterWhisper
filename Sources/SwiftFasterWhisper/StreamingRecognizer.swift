@@ -2,19 +2,18 @@
 // StreamingRecognizer.swift
 // SwiftFasterWhisper
 //
-// Created by Amr Aboelela on 1/21/2026.
+// Created by Amr Aboelela on 1/23/2026.
 //
 
 import Foundation
-import faster_whisper
 
-/// Delegate protocol for streaming recognition callbacks
+/// Delegate protocol for streaming recognizer callbacks
 public protocol StreamingRecognizerDelegate: AnyObject, Sendable {
-    /// Called when a new transcription segment is available
+    /// Called when new transcription segments are available
     /// - Parameters:
     ///   - recognizer: The streaming recognizer instance
-    ///   - segment: A new stable transcription segment (or nil if no segment ready yet)
-    func recognizer(_ recognizer: StreamingRecognizer, didReceiveSegment segment: TranscriptionSegment?)
+    ///   - segments: New transcription segments
+    func recognizer(_ recognizer: StreamingRecognizer, didReceiveSegments segments: [TranscriptionSegment])
 
     /// Called when streaming finishes or encounters an error
     /// - Parameters:
@@ -23,166 +22,162 @@ public protocol StreamingRecognizerDelegate: AnyObject, Sendable {
     func recognizer(_ recognizer: StreamingRecognizer, didFinishWithError error: Error?)
 }
 
-/// Real-time streaming speech recognizer
-public final class StreamingRecognizer {
-    private var modelHandle: WhisperModelHandle?
-    private let modelPath: String
-    private var isStreaming = false
-
-    /// Energy threshold for manual silence detection (not used internally)
-    /// Default: 0.01 (adjust based on your audio levels)
-    /// Typical values: silence < 0.01, background noise ~0.015, speech > 0.02
-    /// Use with calculateEnergy() and hasSufficientEnergy() for custom filtering
-    public var energyThreshold: Float = 0.01
+/// Handles streaming audio processing with buffering and concurrent transcription
+/// Uses ModelManager as the underlying model wrapper
+public actor StreamingRecognizer {
+    private let modelManager: ModelManager
+    private var buffer: [Float] = []
+    public private(set) var isProcessing = false
+    private let windowSize: Int
+    private var pendingSegments: [TranscriptionSegment] = []
+    private var activeTask: Task<Void, Never>?
 
     /// Delegate for receiving streaming callbacks
-    public weak var delegate: (any StreamingRecognizerDelegate)?
+    private weak var _delegate: (any StreamingRecognizerDelegate)?
 
-    /// Check if currently streaming
-    public var streamingActive: Bool {
-        isStreaming
+    /// Set delegate (actor-isolated)
+    public func setDelegate(_ delegate: (any StreamingRecognizerDelegate)?) {
+        self._delegate = delegate
     }
 
-    /// Initialize with model path
-    /// - Parameter modelPath: Path to the CTranslate2 Whisper model directory
-    public init(modelPath: String) {
-        self.modelPath = modelPath
-    }
-
-    deinit {
-        // Stop streaming synchronously for deinit
-        if isStreaming, let handle = modelHandle {
-            isStreaming = false
-            whisper_stop_streaming(handle)
-        }
-
-        if let handle = modelHandle {
-            whisper_destroy_model(handle)
-        }
-    }
-
-    /// Load the Whisper model
-    /// - Throws: `RecognitionError` if model loading fails
-    public func loadModel() throws {
-        guard !modelPath.isEmpty else {
-            throw RecognitionError.invalidModelPath
-        }
-
-        let handle = whisper_create_model(modelPath)
-        guard handle != nil else {
-            throw RecognitionError.modelLoadFailed("Failed to create model from path: \(modelPath)")
-        }
-
-        self.modelHandle = handle
-    }
-
-    // MARK: - Streaming Control
-
-    /// Start streaming transcription or translation
+    /// Initialize with model path and window parameters
     /// - Parameters:
-    ///   - language: Optional language code (nil for auto-detection)
-    ///   - task: Task type - "transcribe" (default) or "translate"
-    /// - Throws: `RecognitionError` if streaming start fails
-    public func startStreaming(language: String? = nil, task: String = "transcribe") throws {
-        guard let handle = modelHandle else {
-            throw RecognitionError.modelNotLoaded
-        }
-
-        guard !isStreaming else {
-            return  // Already streaming
-        }
-
-        whisper_start_streaming(handle, language, task)
-        isStreaming = true
+    ///   - modelPath: Path to the Whisper model
+    ///   - windowSize: Size of transcription window in samples (default: 67200 = 4.2s at 16kHz)
+    public init(modelPath: String, windowSize: Int = 67200) {
+        self.modelManager = ModelManager(modelPath: modelPath)
+        self.windowSize = windowSize
     }
 
-    /// Add an audio chunk for processing
-    /// Call this repeatedly with audio chunks (recommended: 1-second chunks = 16000 samples at 16kHz)
-    /// Internally uses a 4-second sliding window
-    /// - Parameter chunk: Audio samples (16kHz mono float32, any size but 16000 samples recommended)
-    /// - Throws: `RecognitionError` if streaming is not active
-    public func addAudioChunk(_ chunk: [Float]) throws {
-        guard let handle = modelHandle else {
-            throw RecognitionError.modelNotLoaded
+    /// Load the model
+    public func loadModel() async throws {
+        try await modelManager.loadModel()
+    }
+
+    /// Configure streaming parameters
+    /// - Parameters:
+    ///   - language: Language code (nil for auto-detection)
+    ///   - task: "transcribe" or "translate"
+    public func configure(language: String? = nil, task: String = "transcribe") async {
+        await modelManager.configure(language: language, task: task)
+    }
+
+    /// Add audio chunk for processing
+    /// Handles buffering and triggers transcription when window is ready
+    /// - Parameter chunk: Audio samples (16kHz mono float32)
+    public func addAudioChunk(_ chunk: [Float]) async throws {
+        // Add to buffer
+        buffer.append(contentsOf: chunk)
+
+        // Try to submit if we have enough buffer
+        if buffer.count >= windowSize {
+            if isProcessing {
+                // Model is busy - find and remove the chunk with lowest energy
+                let chunkSize = 16000  // 1 second at 16kHz
+                let numChunks = buffer.count / chunkSize
+
+                if numChunks > 0 {
+                    var lowestEnergyIndex = 0
+                    var lowestEnergy = Float.infinity
+
+                    // Find chunk with lowest energy
+                    for i in 0..<numChunks {
+                        let start = i * chunkSize
+                        let end = min(start + chunkSize, buffer.count)
+                        let segment = buffer[start..<end]
+                        let energy = segment.reduce(0.0) { $0 + abs($1) } / Float(segment.count)
+
+                        if energy < lowestEnergy {
+                            lowestEnergy = energy
+                            lowestEnergyIndex = i
+                        }
+                    }
+
+                    // Remove the lowest energy chunk
+                    let removeStart = lowestEnergyIndex * chunkSize
+                    let removeEnd = min(removeStart + chunkSize, buffer.count)
+                    buffer.removeSubrange(removeStart..<removeEnd)
+
+                    print("⚠️  Model busy, dropped chunk #\(lowestEnergyIndex + 1) (energy: \(String(format: "%.6f", lowestEnergy)), buffer: \(String(format: "%.2f", Float(buffer.count) / 16000.0))s)")
+                }
+            } else {
+                // Model is free, submit now
+                isProcessing = true
+
+                // Extract window
+                let window = Array(buffer.prefix(windowSize))
+
+                // Remove window from buffer
+                let removeAmount = min(windowSize, buffer.count)
+                buffer.removeFirst(removeAmount)
+
+                // Start transcription in background (non-blocking)
+                activeTask = Task {
+                    await self.processWindow(window)
+                }
+            }
+        }
+    }
+
+    /// Process audio window in background
+    /// - Parameter window: Audio samples to transcribe
+    private func processWindow(_ window: [Float]) async {
+        do {
+            // Transcribe
+            let segments = try await modelManager.transcribe(audio: window)
+
+            // Store segments for polling and notify delegate
+            if !segments.isEmpty {
+                // Store for polling
+                pendingSegments.append(contentsOf: segments)
+
+                // Notify delegate if set
+                _delegate?.recognizer(self, didReceiveSegments: segments)
+            }
+        } catch {
+            print("❌ Transcription error: \(error)")
+            _delegate?.recognizer(self, didFinishWithError: error)
         }
 
-        guard isStreaming else {
-            throw RecognitionError.streamingNotActive
-        }
+        isProcessing = false
+    }
 
-        guard !chunk.isEmpty else {
+    /// Get new transcription segments (non-blocking poll)
+    /// Returns any segments that have been processed since last call
+    /// - Returns: Array of new segments, empty if none available
+    public func getNewSegments() -> [TranscriptionSegment] {
+        let segments = pendingSegments
+        pendingSegments.removeAll()
+        return segments
+    }
+
+    /// Flush any remaining buffer and transcribe it
+    /// Useful for processing leftover audio at the end of streaming
+    public func flush() async {
+        guard buffer.count > 0 && !isProcessing else {
             return
         }
 
-        chunk.withUnsafeBufferPointer { buffer in
-            whisper_add_audio_chunk(
-                handle,
-                buffer.baseAddress,
-                UInt(chunk.count)
-            )
+        isProcessing = true
+
+        // Extract whatever is in the buffer
+        let window = buffer
+        print("🔄 Flushing \(String(format: "%.2f", Float(window.count) / 16000.0))s of buffered audio")
+
+        // Clear buffer
+        buffer.removeAll()
+
+        // Transcribe in background
+        activeTask = Task {
+            await self.processWindow(window)
         }
     }
 
-    /// Calculate RMS (Root Mean Square) energy of an audio chunk
-    /// - Parameter chunk: Audio samples
-    /// - Returns: RMS energy value
-    public func calculateEnergy(_ chunk: [Float]) -> Float {
-        guard !chunk.isEmpty else { return 0.0 }
-
-        let sumOfSquares = chunk.reduce(0.0) { $0 + ($1 * $1) }
-        return sqrt(sumOfSquares / Float(chunk.count))
-    }
-
-    /// Check if audio chunk has sufficient energy (not silence)
-    /// - Parameter chunk: Audio samples
-    /// - Returns: True if energy is above threshold, false if silence
-    public func hasSufficientEnergy(_ chunk: [Float]) -> Bool {
-        return calculateEnergy(chunk) >= energyThreshold
-    }
-
-    /// Get new transcription segments
-    /// Call this after adding audio chunks to check if transcription is ready
-    /// - Returns: Array of segments if ready, empty array if not ready yet
-    /// - Throws: `RecognitionError` if streaming is not active
-    public func getNewSegments() throws -> [TranscriptionSegment] {
-        guard let handle = modelHandle else {
-            throw RecognitionError.modelNotLoaded
-        }
-
-        guard isStreaming else {
-            throw RecognitionError.streamingNotActive
-        }
-
-        var count: UInt = 0
-        let segments = whisper_get_new_segments(handle, &count)
-
-        guard count > 0, let segments = segments else {
-            return []
-        }
-        defer { whisper_free_segments(segments, count) }
-
-        var result: [TranscriptionSegment] = []
-        for i in 0..<Int(count) {
-            let seg = segments[i]
-            let text = seg.text != nil ? String(cString: seg.text) : ""
-            result.append(TranscriptionSegment(
-                text: text,
-                start: seg.start,
-                end: seg.end
-            ))
-        }
-
-        return result
-    }
-
-    /// Stop streaming transcription
-    public func stopStreaming() {
-        guard let handle = modelHandle, isStreaming else {
-            return
-        }
-
-        isStreaming = false
-        whisper_stop_streaming(handle)
-        delegate?.recognizer(self, didFinishWithError: nil)
+    /// Stop streaming and cleanup
+    public func stop() {
+        buffer.removeAll()
+        pendingSegments.removeAll()
+        activeTask = nil
+        _delegate?.recognizer(self, didFinishWithError: nil)
     }
 }

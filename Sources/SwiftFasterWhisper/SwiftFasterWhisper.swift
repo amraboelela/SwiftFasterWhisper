@@ -47,7 +47,7 @@ public final class SwiftFasterWhisper {
         if let customPath = customModelPath {
             modelURL = URL(fileURLWithPath: customPath)
         } else {
-            modelURL = try await ModelManager.ensureWhisperModel(
+            modelURL = try await ModelFileManager.ensureWhisperModel(
                 size: modelSize,
                 progressCallback: downloadProgressCallback
             )

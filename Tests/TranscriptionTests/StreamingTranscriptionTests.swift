@@ -16,7 +16,7 @@ struct StreamingTranscriptionTests {
         let base = TestBase()
         let modelPath = try await base.downloadModelIfNeeded()
 
-        print("\n========== STREAMING TEST (English, 0.5s chunks) ==========")
+        print("\n========== STREAMING TEST (English, 1s chunks) ==========")
 
         let audioPath = try base.findTestFile("jfk.wav")
         let fullAudio = try base.convertAudioToPCM(audioPath: audioPath)
@@ -26,35 +26,32 @@ struct StreamingTranscriptionTests {
         print("Total samples: \(fullAudio.count)")
 
         let recognizer = StreamingRecognizer(modelPath: modelPath)
-        try recognizer.loadModel()
-        try recognizer.startStreaming(language: "en")
+        try await recognizer.loadModel()
+        await recognizer.configure(language: "en")
 
-        let chunkSize = 8000  // 0.5 seconds (16000 samples/sec)
         var allSegments: [String] = []
-        var offset = 0
 
-        print("\n--- Sending 0.5s audio chunks ---")
+        print("\n--- Sending 1s audio chunks ---")
 
-        while offset < fullAudio.count {
-            let end = min(offset + chunkSize, fullAudio.count)
-            let chunk = Array(fullAudio[offset..<end])
+        let producer = ChunksProducer(audio: fullAudio)
+        try await producer.start(
+            onChunk: { chunkNumber, chunk, isLast in
+                print("[Chunk \(chunkNumber)] Sending \(String(format: "%.2f", Float(chunk.count) / 16000.0))s")
 
-            print("[Chunk \(offset / chunkSize + 1)] Sending \(String(format: "%.2f", Float(chunk.count) / 16000.0))s")
+                try await recognizer.addAudioChunk(chunk)
 
-            try recognizer.addAudioChunk(chunk)
-
-            // Check for new segments (blocking call, returns empty array if not ready)
-            let segments = try recognizer.getNewSegments()
-            for segment in segments {
-                let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                print("📤 Received segment: '\(text)'")
-                allSegments.append(text)
+                // Check for new segments (non-blocking poll)
+                let segments = await recognizer.getNewSegments()
+                for segment in segments {
+                    let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    print("📤 Received segment: '\(text)'")
+                    allSegments.append(text)
+                }
+            },
+            onComplete: {
+                await recognizer.stop()
             }
-
-            offset = end
-        }
-
-        recognizer.stopStreaming()
+        )
 
         let fullText = allSegments.joined(separator: " ").lowercased()
 
@@ -78,7 +75,7 @@ struct StreamingTranscriptionTests {
         let base = TestBase()
         let modelPath = try await base.downloadModelIfNeeded()
 
-        print("\n========== STREAMING TEST (Turkish, 0.5s chunks) ==========")
+        print("\n========== STREAMING TEST (Turkish, 1s chunks) ==========")
 
         let audioPath = try base.findTestFile("05-speech.wav")
         let fullAudio = try base.convertAudioToPCM(audioPath: audioPath)
@@ -87,35 +84,32 @@ struct StreamingTranscriptionTests {
         print("Full audio duration: \(String(format: "%.2f", Double(fullAudio.count) / 16000.0))s")
 
         let recognizer = StreamingRecognizer(modelPath: modelPath)
-        try recognizer.loadModel()
-        try recognizer.startStreaming(language: "tr")
+        try await recognizer.loadModel()
+        await recognizer.configure(language: "tr")
 
-        let chunkSize = 8000  // 0.5 seconds (16000 samples/sec)
         var allSegments: [String] = []
-        var offset = 0
 
-        print("\n--- Sending 0.5s audio chunks ---")
+        print("\n--- Sending 1s audio chunks ---")
 
-        while offset < fullAudio.count {
-            let end = min(offset + chunkSize, fullAudio.count)
-            let chunk = Array(fullAudio[offset..<end])
+        let producer = ChunksProducer(audio: fullAudio)
+        try await producer.start(
+            onChunk: { chunkNumber, chunk, isLast in
+                print("[Chunk \(chunkNumber)] Sending \(String(format: "%.2f", Float(chunk.count) / 16000.0))s")
 
-            print("[Chunk \(offset / chunkSize + 1)] Sending \(String(format: "%.2f", Float(chunk.count) / 16000.0))s")
+                try await recognizer.addAudioChunk(chunk)
 
-            try recognizer.addAudioChunk(chunk)
-
-            // Check for new segments (blocking call, returns empty array if not ready)
-            let segments = try recognizer.getNewSegments()
-            for segment in segments {
-                let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                print("📤 Received segment: '\(text)'")
-                allSegments.append(text)
+                // Check for new segments (non-blocking poll)
+                let segments = await recognizer.getNewSegments()
+                for segment in segments {
+                    let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    print("📤 Received segment: '\(text)'")
+                    allSegments.append(text)
+                }
+            },
+            onComplete: {
+                await recognizer.stop()
             }
-
-            offset = end
-        }
-
-        recognizer.stopStreaming()
+        )
 
         let fullText = allSegments.joined(separator: " ")
 
@@ -140,23 +134,23 @@ struct StreamingTranscriptionTests {
         print("\n========== TEST: getNewSegments() returns empty array ==========")
 
         let recognizer = StreamingRecognizer(modelPath: modelPath)
-        try recognizer.loadModel()
-        try recognizer.startStreaming(language: "en")
+        try await recognizer.loadModel()
+        await recognizer.configure(language: "en")
 
         // Poll immediately without adding audio - should return empty array
-        let segments1 = try recognizer.getNewSegments()
+        let segments1 = await recognizer.getNewSegments()
         print("Poll before any audio: \(segments1.isEmpty ? "empty array ✅" : "\(segments1.count) segments (unexpected)")")
         #expect(segments1.isEmpty, "Should return empty array when no audio has been added")
 
         // Add very small chunk (too small for a full segment)
         let smallChunk = [Float](repeating: 0.0, count: 1600)  // 0.1 second
-        try recognizer.addAudioChunk(smallChunk)
+        try await recognizer.addAudioChunk(smallChunk)
 
-        let segments2 = try recognizer.getNewSegments()
+        let segments2 = await recognizer.getNewSegments()
         print("Poll after tiny chunk: \(segments2.isEmpty ? "empty array ✅" : "\(segments2.count) segments")")
         // May or may not be empty - just testing the API works
 
-        recognizer.stopStreaming()
+        await recognizer.stop()
         print("=======================================================\n")
     }
 }

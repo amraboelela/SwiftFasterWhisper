@@ -16,7 +16,7 @@ struct StreamingTranslationTests {
         let base = TestBase()
         let modelPath = try await base.downloadModelIfNeeded()
 
-        print("\n========== STREAMING TRANSLATION TEST (Turkish → English, 0.5s chunks) ==========")
+        print("\n========== STREAMING TRANSLATION TEST (Turkish → English, 1s chunks) ==========")
 
         let audioPath = try base.findTestFile("05-speech.wav")
         let fullAudio = try base.convertAudioToPCM(audioPath: audioPath)
@@ -25,35 +25,32 @@ struct StreamingTranslationTests {
         print("Full audio duration: \(String(format: "%.2f", Double(fullAudio.count) / 16000.0))s")
 
         let recognizer = StreamingRecognizer(modelPath: modelPath)
-        try recognizer.loadModel()
-        try recognizer.startStreaming(language: "tr", task: "translate")
+        try await recognizer.loadModel()
+        await recognizer.configure(language: "tr", task: "translate")
 
-        let chunkSize = 8000  // 0.5 seconds (16000 samples/sec)
         var allSegments: [String] = []
-        var offset = 0
 
-        print("\n--- Sending 0.5s audio chunks ---")
+        print("\n--- Sending 1s audio chunks ---")
 
-        while offset < fullAudio.count {
-            let end = min(offset + chunkSize, fullAudio.count)
-            let chunk = Array(fullAudio[offset..<end])
+        let producer = ChunksProducer(audio: fullAudio)
+        try await producer.start(
+            onChunk: { chunkNumber, chunk, isLast in
+                print("[Chunk \(chunkNumber)] Sending \(String(format: "%.2f", Float(chunk.count) / 16000.0))s")
 
-            print("[Chunk \(offset / chunkSize + 1)] Sending \(String(format: "%.2f", Float(chunk.count) / 16000.0))s")
+                try await recognizer.addAudioChunk(chunk)
 
-            try recognizer.addAudioChunk(chunk)
-
-            // Check for new segments (blocking call, returns empty array if not ready)
-            let segments = try recognizer.getNewSegments()
-            for segment in segments {
-                let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                print("📤 Received segment: '\(text)'")
-                allSegments.append(text)
+                // Check for new segments (non-blocking call, returns empty array if not ready)
+                let segments = await recognizer.getNewSegments()
+                for segment in segments {
+                    let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    print("📤 Received segment: '\(text)'")
+                    allSegments.append(text)
+                }
+            },
+            onComplete: {
+                await recognizer.stop()
             }
-
-            offset = end
-        }
-
-        recognizer.stopStreaming()
+        )
 
         let fullText = allSegments.joined(separator: " ").lowercased()
 
@@ -63,8 +60,8 @@ struct StreamingTranslationTests {
 
         print("========== ACCURACY ANALYSIS ==========")
         print("Turkish: \(expectedTurkish)")
-        print("Expected (English): \(expectedEnglish)")
-        print("Generated (Whisper): \(fullText)")
+        print("Expected: \(expectedEnglish)")
+        print("Generated: \(fullText)")
         print("\nMetrics:")
         print("  Accuracy: \(String(format: "%.2f", comparison.accuracy))%")
         print("=======================================\n")
@@ -77,7 +74,7 @@ struct StreamingTranslationTests {
         let base = TestBase()
         let modelPath = try await base.downloadModelIfNeeded()
 
-        print("\n========== STREAMING TRANSLATION TEST (Turkish 3-0100-4 → English, 0.5s chunks) ==========")
+        print("\n========== STREAMING TRANSLATION TEST (Turkish 3-0100-4 → English, 1s chunks) ==========")
 
         let audioPath = try base.findTestFile("turkish_segments/3-0100-4.wav")
         let fullAudio = try base.convertAudioToPCM(audioPath: audioPath)
@@ -86,35 +83,32 @@ struct StreamingTranslationTests {
         print("Full audio duration: \(String(format: "%.2f", Double(fullAudio.count) / 16000.0))s")
 
         let recognizer = StreamingRecognizer(modelPath: modelPath)
-        try recognizer.loadModel()
-        try recognizer.startStreaming(language: "tr", task: "translate")
+        try await recognizer.loadModel()
+        await recognizer.configure(language: "tr", task: "translate")
 
-        let chunkSize = 8000  // 0.5 seconds (16000 samples/sec)
         var allSegments: [String] = []
-        var offset = 0
 
-        print("\n--- Sending 0.5s audio chunks ---")
+        print("\n--- Sending 1s audio chunks ---")
 
-        while offset < fullAudio.count {
-            let end = min(offset + chunkSize, fullAudio.count)
-            let chunk = Array(fullAudio[offset..<end])
+        let producer = ChunksProducer(audio: fullAudio)
+        try await producer.start(
+            onChunk: { chunkNumber, chunk, isLast in
+                print("[Chunk \(chunkNumber)] Sending \(String(format: "%.2f", Float(chunk.count) / 16000.0))s")
 
-            print("[Chunk \(offset / chunkSize + 1)] Sending \(String(format: "%.2f", Float(chunk.count) / 16000.0))s")
+                try await recognizer.addAudioChunk(chunk)
 
-            try recognizer.addAudioChunk(chunk)
-
-            // Check for new segments (blocking call, returns empty array if not ready)
-            let segments = try recognizer.getNewSegments()
-            for segment in segments {
-                let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                print("📤 Received segment: '\(text)'")
-                allSegments.append(text)
+                // Check for new segments (non-blocking call, returns empty array if not ready)
+                let segments = await recognizer.getNewSegments()
+                for segment in segments {
+                    let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    print("📤 Received segment: '\(text)'")
+                    allSegments.append(text)
+                }
+            },
+            onComplete: {
+                await recognizer.stop()
             }
-
-            offset = end
-        }
-
-        recognizer.stopStreaming()
+        )
 
         let fullText = allSegments.joined(separator: " ").lowercased()
 
@@ -123,8 +117,8 @@ struct StreamingTranslationTests {
 
         print("========== ACCURACY ANALYSIS ==========")
         print("Turkish: \(expectedTurkish)")
-        print("Expected (English): \(expectedEnglish)")
-        print("Generated (Whisper): \(fullText)")
+        print("Expected: \(expectedEnglish)")
+        print("Generated: \(fullText)")
 
         // Fail if no segments generated
         #expect(!fullText.isEmpty, "No segments generated - all were filtered as hallucinations")
@@ -143,7 +137,7 @@ struct StreamingTranslationTests {
         let base = TestBase()
         let modelPath = try await base.downloadModelIfNeeded()
 
-        print("\n========== STREAMING TRANSLATION TEST (Turkish 12 → English, 0.5s chunks) ==========")
+        print("\n========== STREAMING TRANSLATION TEST (Turkish 12 → English, 1s chunks) ==========")
 
         let audioPath = try base.findTestFile("12-speech.wav")
         let fullAudio = try base.convertAudioToPCM(audioPath: audioPath)
@@ -152,35 +146,32 @@ struct StreamingTranslationTests {
         print("Full audio duration: \(String(format: "%.2f", Double(fullAudio.count) / 16000.0))s")
 
         let recognizer = StreamingRecognizer(modelPath: modelPath)
-        try recognizer.loadModel()
-        try recognizer.startStreaming(language: "tr", task: "translate")
+        try await recognizer.loadModel()
+        await recognizer.configure(language: "tr", task: "translate")
 
-        let chunkSize = 8000  // 0.5 seconds (16000 samples/sec)
         var allSegments: [String] = []
-        var offset = 0
 
-        print("\n--- Sending 0.5s audio chunks ---")
+        print("\n--- Sending 1s audio chunks ---")
 
-        while offset < fullAudio.count {
-            let end = min(offset + chunkSize, fullAudio.count)
-            let chunk = Array(fullAudio[offset..<end])
+        let producer = ChunksProducer(audio: fullAudio)
+        try await producer.start(
+            onChunk: { chunkNumber, chunk, isLast in
+                print("[Chunk \(chunkNumber)] Sending \(String(format: "%.2f", Float(chunk.count) / 16000.0))s")
 
-            print("[Chunk \(offset / chunkSize + 1)] Sending \(String(format: "%.2f", Float(chunk.count) / 16000.0))s")
+                try await recognizer.addAudioChunk(chunk)
 
-            try recognizer.addAudioChunk(chunk)
-
-            // Check for new segments (blocking call, returns empty array if not ready)
-            let segments = try recognizer.getNewSegments()
-            for segment in segments {
-                let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                print("📤 Received segment: '\(text)'")
-                allSegments.append(text)
+                // Check for new segments (non-blocking call, returns empty array if not ready)
+                let segments = await recognizer.getNewSegments()
+                for segment in segments {
+                    let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    print("📤 Received segment: '\(text)'")
+                    allSegments.append(text)
+                }
+            },
+            onComplete: {
+                await recognizer.stop()
             }
-
-            offset = end
-        }
-
-        recognizer.stopStreaming()
+        )
 
         let fullText = allSegments.joined(separator: " ").lowercased()
 
@@ -194,8 +185,8 @@ struct StreamingTranslationTests {
 
         print("========== ACCURACY ANALYSIS ==========")
         print("Turkish: \(expectedTurkish)")
-        print("Expected (English): \(expectedEnglish)")
-        print("Generated (Whisper): \(fullText)")
+        print("Expected: \(expectedEnglish)")
+        print("Generated: \(fullText)")
         print("\nMetrics:")
         print("  Accuracy: \(String(format: "%.2f", comparison.accuracy))%")
         print("=======================================\n")

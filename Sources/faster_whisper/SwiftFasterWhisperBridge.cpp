@@ -445,6 +445,41 @@ void whisper_add_audio_chunk(
     it->second->add_chunk(chunk_vec);
 }
 
+bool whisper_is_window_ready(WhisperModelHandle model) {
+    if (!model) {
+        return false;
+    }
+
+    auto buffer_it = streaming_buffers.find(model);
+    if (buffer_it == streaming_buffers.end()) {
+        return false;
+    }
+
+    return buffer_it->second->is_ready_to_decode();
+}
+
+void whisper_trim_buffer(
+    WhisperModelHandle model,
+    unsigned long sample_count
+) {
+    if (!model || sample_count == 0) {
+        return;
+    }
+
+    auto buffer_it = streaming_buffers.find(model);
+    if (buffer_it == streaming_buffers.end()) {
+        std::cerr << "Streaming not started for this model" << std::endl;
+        return;
+    }
+
+    auto buffer = buffer_it->second;
+    if (buffer->size() >= sample_count) {
+        buffer->trim_samples(sample_count);
+        // Reset transcribed position since we trimmed
+        last_transcribed_position[model] = SIZE_MAX;
+    }
+}
+
 TranscriptionSegment* whisper_get_new_segments(
     WhisperModelHandle model,
     unsigned long* count

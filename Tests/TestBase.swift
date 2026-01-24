@@ -166,8 +166,8 @@ class TestBase {
     // MARK: - Model Management
 
     func downloadModelIfNeeded() async throws -> String {
-        // Use ModelManager to download to Application Support
-        let modelURL = try await ModelManager.ensureWhisperModel(size: .medium)
+        // Use ModelFileManager to download to Application Support
+        let modelURL = try await ModelFileManager.ensureWhisperModel(size: .medium)
         return modelURL.path
     }
 

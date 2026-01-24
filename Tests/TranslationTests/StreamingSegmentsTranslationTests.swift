@@ -48,7 +48,7 @@ struct StreamingSegmentsTranslationTests {
         Self.totalAudioDuration += audioDuration
 
         print("Audio duration: \(String(format: "%.2f", Double(fullAudio.count) / 16000.0))s")
-        print("Expected (English): \(expectedText)")
+        print("Expected: \(expectedText)")
 
         // Skip test if audio is too short for streaming (need at least 8s for 4s window + 4s slide)
         guard audioDuration >= 8.0 else {
@@ -66,38 +66,47 @@ struct StreamingSegmentsTranslationTests {
 
         // Use streaming recognizer
         let recognizer = StreamingRecognizer(modelPath: modelPath)
-        try recognizer.loadModel()
-        try recognizer.startStreaming(language: "tr", task: "translate")
+        try await recognizer.loadModel()
+        await recognizer.configure(language: "tr", task: "translate")
 
-        let chunkSize = 16000  // 1 second
-        var offset = 0
         var allSegments: [String] = []
 
-        print("\n--- Sending 1s audio chunks ---")
+        print("\n--- Sending 1s audio chunks (simulating real-time) ---")
 
-        while offset < fullAudio.count {
-            let end = min(offset + chunkSize, fullAudio.count)
-            let chunk = Array(fullAudio[offset..<end])
+        let producer = ChunksProducer(audio: fullAudio)
+        try await producer.start(
+            onChunk: { chunkNumber, chunk, isLast in
+                print("[Chunk \(chunkNumber)] Sending \(String(format: "%.2f", Float(chunk.count) / 16000.0))s")
 
-            print("[Chunk \(offset / chunkSize + 1)] Sending \(String(format: "%.2f", Float(chunk.count) / 16000.0))s")
+                try await recognizer.addAudioChunk(chunk)
 
-            try recognizer.addAudioChunk(chunk)
+                // Check for new segments (non-blocking poll)
+                let segments = await recognizer.getNewSegments()
+                for segment in segments {
+                    let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    print("📤 Received segment: '\(text)'")
+                    allSegments.append(text)
+                }
+            },
+            onComplete: {
+                // Flush any remaining buffer
+                await recognizer.flush()
 
-            // Check for new segments (blocking call, returns empty array if not ready)
-            let segments = try recognizer.getNewSegments()
-            for segment in segments {
-                let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                print("📤 Received segment: '\(text)'")
-                allSegments.append(text)
+                // Get any final segments (including from flush)
+                let finalSegments = await recognizer.getNewSegments()
+                for segment in finalSegments {
+                    let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    print("📤 Received final segment: '\(text)'")
+                    allSegments.append(text)
+                }
+
+                await recognizer.stop()
             }
-
-            offset = end
-        }
-
-        recognizer.stopStreaming()
+        )
 
         let generatedText = allSegments.joined(separator: " ")
-        print("Generated (Whisper): \(generatedText)")
+        print("\nExpected: \(expectedText)")
+        print("Generated: \(generatedText)")
 
         // Skip comparison if no segments generated
         guard !generatedText.isEmpty else {

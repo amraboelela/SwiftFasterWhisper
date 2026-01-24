@@ -15,7 +15,7 @@ struct ModelManagerTests {
     @Test func defaultModelsDirectory() async throws {
         print("\n========== TEST: Default Models Directory ==========")
 
-        let modelsDir = try ModelManager.defaultModelsDirectory()
+        let modelsDir = try ModelFileManager.defaultModelsDirectory()
 
         print("Models directory: \(modelsDir.path)")
 
@@ -35,7 +35,7 @@ struct ModelManagerTests {
         print("\n========== TEST: Model Exists Check ==========")
 
         // Test with non-existent model
-        let nonExistent = ModelManager.modelExists(name: "whisper-nonexistent-ct2")
+        let nonExistent = ModelFileManager.modelExists(name: "whisper-nonexistent-ct2")
         #expect(!nonExistent, "Non-existent model should return false")
         print("✅ Non-existent model returns false")
 
@@ -43,7 +43,7 @@ struct ModelManagerTests {
         let base = TestBase()
         _ = try await base.downloadModelIfNeeded()
 
-        let mediumExists = ModelManager.modelExists(name: "whisper-medium-ct2")
+        let mediumExists = ModelFileManager.modelExists(name: "whisper-medium-ct2")
         print("Medium model exists: \(mediumExists)")
 
         print("==============================================\n")
@@ -59,7 +59,7 @@ struct ModelManagerTests {
         setenv("WHISPER_MODEL_PATH", testModelPath, 1)
         defer { unsetenv("WHISPER_MODEL_PATH") }
 
-        let modelURL = try await ModelManager.ensureWhisperModel()
+        let modelURL = try await ModelFileManager.ensureWhisperModel()
 
         print("Model URL: \(modelURL.path)")
         #expect(modelURL.path == testModelPath, "Should use WHISPER_MODEL_PATH")
@@ -72,7 +72,7 @@ struct ModelManagerTests {
         print("\n========== TEST: Ensure Whisper Model Download ==========")
 
         // This will either use existing or download
-        let modelURL = try await ModelManager.ensureWhisperModel(size: WhisperModelSize.medium)
+        let modelURL = try await ModelFileManager.ensureWhisperModel(size: WhisperModelSize.medium)
 
         print("Model URL: \(modelURL.path)")
 
@@ -101,7 +101,7 @@ struct ModelManagerTests {
     @Test func getModelsSize() async throws {
         print("\n========== TEST: Get Models Size ==========")
 
-        let totalSize = try ModelManager.getModelsSize()
+        let totalSize = try ModelFileManager.getModelsSize()
         let sizeMB = totalSize / 1024 / 1024
 
         print("Total models size: \(sizeMB) MB")
@@ -149,7 +149,7 @@ struct ModelManagerTests {
         }
 
         // This will reuse existing model, so may not trigger progress
-        _ = try await ModelManager.ensureWhisperModel(
+        _ = try await ModelFileManager.ensureWhisperModel(
             size: WhisperModelSize.medium,
             progressCallback: callback
         )

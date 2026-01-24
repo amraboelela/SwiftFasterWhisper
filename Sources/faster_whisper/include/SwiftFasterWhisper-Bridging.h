@@ -81,6 +81,15 @@ void whisper_add_audio_chunk(
     unsigned long chunk_length
 );
 
+// Check if buffer has a full window ready for transcription (non-blocking)
+bool whisper_is_window_ready(WhisperModelHandle model);
+
+// Trim samples from the buffer (for overflow handling when model is busy)
+void whisper_trim_buffer(
+    WhisperModelHandle model,
+    unsigned long sample_count  // Number of samples to trim
+);
+
 TranscriptionSegment* whisper_get_new_segments(
     WhisperModelHandle model,
     unsigned long* count  // Output: number of segments
