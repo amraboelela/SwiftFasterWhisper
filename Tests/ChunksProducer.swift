@@ -55,12 +55,12 @@ class ChunksProducer {
             try await Task.sleep(for: .seconds(1))
         }
 
-        // Send 10 more seconds of silence to allow processing to complete
-        print("\n--- Sending 10s of silence to allow processing to finish ---")
+        // Send silence equal to 110% of audio duration to allow processing to complete
+        let audioDuration = Int(ceil(Double(fullAudio.count) / Double(chunkSize)))
+        let silenceDuration = Int(ceil(Double(audioDuration) * 1.1))
         let silenceChunk = [Float](repeating: 0.0, count: chunkSize)
-        for i in 1...10 {
-            print("[Silence \(i)] Sending 1.00s of silence")
-            try await onChunk(chunkNumber, silenceChunk, i == 10)
+        for i in 1...silenceDuration {
+            try await onChunk(chunkNumber, silenceChunk, i == silenceDuration)
             chunkNumber += 1
             try await Task.sleep(for: .seconds(1))
         }

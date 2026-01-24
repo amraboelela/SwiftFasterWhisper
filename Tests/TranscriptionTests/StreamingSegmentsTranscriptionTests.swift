@@ -77,7 +77,6 @@ struct StreamingSegmentsTranscriptionTests {
         try await producer.start(
             onChunk: { chunkNumber, chunk, isLast in
                 print("[Chunk \(chunkNumber)] Sending \(String(format: "%.2f", Float(chunk.count) / 16000.0))s")
-
                 try await recognizer.addAudioChunk(chunk)
 
                 // Check for new segments (non-blocking poll)

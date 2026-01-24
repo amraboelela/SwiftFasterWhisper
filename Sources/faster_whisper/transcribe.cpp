@@ -122,9 +122,6 @@ WhisperModel::WhisperModel(
 
   for (auto compute_type : compute_types) {
     try {
-      std::cout << "Initializing Whisper model with compute type: "
-                << (int)compute_type << " (FLOAT32)" << std::endl;
-
       created_model = std::make_shared<ctranslate2::models::Whisper>(
         model_path,
         ctranslate2::Device::CPU,
@@ -134,7 +131,6 @@ WhisperModel::WhisperModel(
         config
       );
 
-      std::cout << "Successfully initialized Whisper model" << std::endl;
       break;
 
     } catch (const std::exception& e) {
