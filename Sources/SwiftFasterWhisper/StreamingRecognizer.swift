@@ -145,29 +145,6 @@ public actor StreamingRecognizer {
         return text
     }
 
-    /// Flush any remaining buffer and transcribe it
-    /// Useful for processing leftover audio at the end of streaming
-    public func flush() async {
-        // Poll one more time for any final segments
-        do {
-            let finalSegments = try await modelManager.getNewSegments()
-
-            if !finalSegments.isEmpty {
-                for segment in finalSegments {
-                    let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !text.isEmpty {
-                        if !pendingText.isEmpty {
-                            pendingText += " "
-                        }
-                        pendingText += text
-                    }
-                }
-            }
-        } catch {
-            print("❌ Flush error: \(error)")
-        }
-    }
-
     /// Stop streaming and cleanup
     public func stop() async {
         // Clear all state

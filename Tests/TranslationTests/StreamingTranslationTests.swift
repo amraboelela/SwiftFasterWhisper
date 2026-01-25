@@ -50,10 +50,7 @@ struct StreamingTranslationTests {
                 }
             },
             onComplete: {
-                // Flush any remaining buffer
-                await recognizer.flush()
-
-                // Get any final text (including from flush)
+                // Get any final text
                 let finalText = await recognizer.getNewText()
                 if !finalText.isEmpty {
                     print("📤 Received final text: '\(finalText)'")
@@ -123,10 +120,7 @@ struct StreamingTranslationTests {
                 }
             },
             onComplete: {
-                // Flush any remaining buffer
-                await recognizer.flush()
-
-                // Get any final text (including from flush)
+                // Get any final text
                 let finalText = await recognizer.getNewText()
                 if !finalText.isEmpty {
                     print("📤 Received final text: '\(finalText)'")
@@ -201,10 +195,7 @@ struct StreamingTranslationTests {
                 }
             },
             onComplete: {
-                // Flush any remaining buffer
-                await recognizer.flush()
-
-                // Get any final text (including from flush)
+                // Get any final text
                 let finalText = await recognizer.getNewText()
                 if !finalText.isEmpty {
                     print("📤 Received final text: '\(finalText)'")
