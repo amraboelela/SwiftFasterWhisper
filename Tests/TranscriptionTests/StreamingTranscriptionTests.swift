@@ -27,7 +27,7 @@ struct StreamingTranscriptionTests {
 
         let recognizer = StreamingRecognizer(modelPath: modelPath)
         try await recognizer.loadModel()
-        await recognizer.configure(language: "en")
+        try await recognizer.configure(language: "en")
 
         var allSegments: [String] = []
 
@@ -49,6 +49,17 @@ struct StreamingTranscriptionTests {
                 }
             },
             onComplete: {
+                // Flush any remaining buffer
+                await recognizer.flush()
+
+                // Get any final segments (including from flush)
+                let finalSegments = await recognizer.getNewSegments()
+                for segment in finalSegments {
+                    let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    print("📤 Received final segment: '\(text)'")
+                    allSegments.append(text)
+                }
+
                 await recognizer.stop()
             }
         )
@@ -85,7 +96,7 @@ struct StreamingTranscriptionTests {
 
         let recognizer = StreamingRecognizer(modelPath: modelPath)
         try await recognizer.loadModel()
-        await recognizer.configure(language: "tr")
+        try await recognizer.configure(language: "tr")
 
         var allSegments: [String] = []
 
@@ -107,6 +118,17 @@ struct StreamingTranscriptionTests {
                 }
             },
             onComplete: {
+                // Flush any remaining buffer
+                await recognizer.flush()
+
+                // Get any final segments (including from flush)
+                let finalSegments = await recognizer.getNewSegments()
+                for segment in finalSegments {
+                    let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    print("📤 Received final segment: '\(text)'")
+                    allSegments.append(text)
+                }
+
                 await recognizer.stop()
             }
         )
@@ -135,7 +157,7 @@ struct StreamingTranscriptionTests {
 
         let recognizer = StreamingRecognizer(modelPath: modelPath)
         try await recognizer.loadModel()
-        await recognizer.configure(language: "en")
+        try await recognizer.configure(language: "en")
 
         // Poll immediately without adding audio - should return empty array
         let segments1 = await recognizer.getNewSegments()

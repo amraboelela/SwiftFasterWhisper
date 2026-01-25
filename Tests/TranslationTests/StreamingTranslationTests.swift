@@ -26,7 +26,7 @@ struct StreamingTranslationTests {
 
         let recognizer = StreamingRecognizer(modelPath: modelPath)
         try await recognizer.loadModel()
-        await recognizer.configure(language: "tr", task: "translate")
+        try await recognizer.configure(language: "tr", task: "translate")
 
         var allSegments: [String] = []
 
@@ -48,6 +48,17 @@ struct StreamingTranslationTests {
                 }
             },
             onComplete: {
+                // Flush any remaining buffer
+                await recognizer.flush()
+
+                // Get any final segments (including from flush)
+                let finalSegments = await recognizer.getNewSegments()
+                for segment in finalSegments {
+                    let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    print("📤 Received final segment: '\(text)'")
+                    allSegments.append(text)
+                }
+
                 await recognizer.stop()
             }
         )
@@ -84,7 +95,7 @@ struct StreamingTranslationTests {
 
         let recognizer = StreamingRecognizer(modelPath: modelPath)
         try await recognizer.loadModel()
-        await recognizer.configure(language: "tr", task: "translate")
+        try await recognizer.configure(language: "tr", task: "translate")
 
         var allSegments: [String] = []
 
@@ -106,6 +117,17 @@ struct StreamingTranslationTests {
                 }
             },
             onComplete: {
+                // Flush any remaining buffer
+                await recognizer.flush()
+
+                // Get any final segments (including from flush)
+                let finalSegments = await recognizer.getNewSegments()
+                for segment in finalSegments {
+                    let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    print("📤 Received final segment: '\(text)'")
+                    allSegments.append(text)
+                }
+
                 await recognizer.stop()
             }
         )
@@ -147,7 +169,7 @@ struct StreamingTranslationTests {
 
         let recognizer = StreamingRecognizer(modelPath: modelPath)
         try await recognizer.loadModel()
-        await recognizer.configure(language: "tr", task: "translate")
+        try await recognizer.configure(language: "tr", task: "translate")
 
         var allSegments: [String] = []
 
@@ -169,6 +191,17 @@ struct StreamingTranslationTests {
                 }
             },
             onComplete: {
+                // Flush any remaining buffer
+                await recognizer.flush()
+
+                // Get any final segments (including from flush)
+                let finalSegments = await recognizer.getNewSegments()
+                for segment in finalSegments {
+                    let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    print("📤 Received final segment: '\(text)'")
+                    allSegments.append(text)
+                }
+
                 await recognizer.stop()
             }
         )

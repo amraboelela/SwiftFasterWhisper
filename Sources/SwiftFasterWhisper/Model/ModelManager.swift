@@ -23,6 +23,7 @@ public actor ModelManager {
     private var language: String?
     private var task: String = "transcribe"
     private var isModelBusy = false
+    private var isStreamingStarted = false
 
     // MARK: - Initialization
 
@@ -65,6 +66,78 @@ public actor ModelManager {
         self.task = task
     }
 
+    /// Start streaming session (call once before transcribing)
+    /// - Throws: `RecognitionError` if model not loaded
+    public func startStreaming() throws {
+        guard let handle = modelHandle else {
+            throw RecognitionError.modelNotLoaded
+        }
+
+        if !isStreamingStarted {
+            whisper_start_streaming(handle, language, task)
+            isStreamingStarted = true
+        }
+    }
+
+    /// Stop streaming and reset state
+    public func stopStreaming() {
+        guard let handle = modelHandle else {
+            return
+        }
+
+        if isStreamingStarted {
+            whisper_stop_streaming(handle)
+            isStreamingStarted = false
+        }
+    }
+
+    /// Add audio chunk to streaming buffer (incremental feeding)
+    /// - Parameter chunk: Audio samples (16kHz mono float32)
+    /// - Throws: `RecognitionError` if model not loaded or streaming not started
+    public func addChunk(_ chunk: [Float]) throws {
+        guard let handle = modelHandle else {
+            throw RecognitionError.modelNotLoaded
+        }
+
+        guard !chunk.isEmpty else {
+            return
+        }
+
+        chunk.withUnsafeBufferPointer { buffer in
+            whisper_add_audio_chunk(handle, buffer.baseAddress, UInt(chunk.count))
+        }
+    }
+
+    /// Get new transcription segments from C++ streaming buffer
+    /// - Returns: Array of new segments
+    /// - Throws: `RecognitionError` if model not loaded
+    public func getNewSegments() throws -> [TranscriptionSegment] {
+        guard let handle = modelHandle else {
+            throw RecognitionError.modelNotLoaded
+        }
+
+        var count: UInt = 0
+        let cSegments = whisper_get_new_segments(handle, &count)
+
+        guard count > 0, let cSegments = cSegments else {
+            return []
+        }
+        defer { whisper_free_segments(cSegments, count) }
+
+        var result: [TranscriptionSegment] = []
+        for i in 0..<Int(count) {
+            let seg = cSegments[i]
+            let text = seg.text != nil ? String(cString: seg.text) : ""
+            result.append(TranscriptionSegment(
+                text: text,
+                start: seg.start,
+                end: seg.end
+            ))
+        }
+
+        return result
+    }
+
     // MARK: - Transcription
 
     /// Process audio and return transcription segments
@@ -89,10 +162,7 @@ public actor ModelManager {
         isModelBusy = true
         defer { isModelBusy = false }
 
-        // Initialize streaming if not already done
-        whisper_start_streaming(handle, language, task)
-
-        // Add all audio at once
+        // Transcribe audio
         let segments: [TranscriptionSegment] = await Task.detached { [handle, audio] in
             audio.withUnsafeBufferPointer { buffer in
                 whisper_add_audio_chunk(handle, buffer.baseAddress, UInt(audio.count))
