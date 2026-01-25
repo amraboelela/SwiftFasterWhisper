@@ -26,10 +26,10 @@ struct StreamingTranscriptionTests {
         print("Total samples: \(fullAudio.count)")
 
         let recognizer = StreamingRecognizer(modelPath: modelPath)
-        try await recognizer.loadModel()
+        // Model loaded in configure()
         try await recognizer.configure(language: "en")
 
-        var allSegments: [String] = []
+        var allText = ""
 
         print("\n--- Sending 1s audio chunks ---")
 
@@ -38,33 +38,37 @@ struct StreamingTranscriptionTests {
             onChunk: { chunkNumber, chunk, isLast in
                 print("[Chunk \(chunkNumber)] Sending \(String(format: "%.2f", Float(chunk.count) / 16000.0))s")
 
-                try await recognizer.addAudioChunk(chunk)
+                await recognizer.addAudioChunk(chunk)
 
-                // Check for new segments (non-blocking poll)
-                let segments = await recognizer.getNewSegments()
-                for segment in segments {
-                    let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                    print("📤 Received segment: '\(text)'")
-                    allSegments.append(text)
+                // Check for new text (non-blocking poll)
+                let text = await recognizer.getNewText()
+                if !text.isEmpty {
+                    print("📤 Received text: '\(text)'")
+                    if !allText.isEmpty {
+                        allText += " "
+                    }
+                    allText += text
                 }
             },
             onComplete: {
                 // Flush any remaining buffer
                 await recognizer.flush()
 
-                // Get any final segments (including from flush)
-                let finalSegments = await recognizer.getNewSegments()
-                for segment in finalSegments {
-                    let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                    print("📤 Received final segment: '\(text)'")
-                    allSegments.append(text)
+                // Get any final text (including from flush)
+                let finalText = await recognizer.getNewText()
+                if !finalText.isEmpty {
+                    print("📤 Received final text: '\(finalText)'")
+                    if !allText.isEmpty {
+                        allText += " "
+                    }
+                    allText += finalText
                 }
 
                 await recognizer.stop()
             }
         )
 
-        let fullText = allSegments.joined(separator: " ").lowercased()
+        let fullText = allText.lowercased()
 
         let expectedText = "and so my fellow americans ask not what your country can do for you ask what you can do for your country"
         let comparison = base.compareWithReference(generated: fullText, expected: expectedText)
@@ -79,7 +83,7 @@ struct StreamingTranscriptionTests {
         #expect(comparison.accuracy > 80.0,
             "Streaming transcription accuracy should be greater than 80%. Got \(String(format: "%.2f", comparison.accuracy))%")
 
-        #expect(allSegments.count > 0, "Should receive at least one segment")
+        #expect(!allText.isEmpty, "Should receive at least some text")
     }
 
     @Test func streamTurkishAudioWithChunks() async throws {
@@ -95,10 +99,10 @@ struct StreamingTranscriptionTests {
         print("Full audio duration: \(String(format: "%.2f", Double(fullAudio.count) / 16000.0))s")
 
         let recognizer = StreamingRecognizer(modelPath: modelPath)
-        try await recognizer.loadModel()
+        // Model loaded in configure()
         try await recognizer.configure(language: "tr")
 
-        var allSegments: [String] = []
+        var allText = ""
 
         print("\n--- Sending 1s audio chunks ---")
 
@@ -107,33 +111,37 @@ struct StreamingTranscriptionTests {
             onChunk: { chunkNumber, chunk, isLast in
                 print("[Chunk \(chunkNumber)] Sending \(String(format: "%.2f", Float(chunk.count) / 16000.0))s")
 
-                try await recognizer.addAudioChunk(chunk)
+                await recognizer.addAudioChunk(chunk)
 
-                // Check for new segments (non-blocking poll)
-                let segments = await recognizer.getNewSegments()
-                for segment in segments {
-                    let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                    print("📤 Received segment: '\(text)'")
-                    allSegments.append(text)
+                // Check for new text (non-blocking poll)
+                let text = await recognizer.getNewText()
+                if !text.isEmpty {
+                    print("📤 Received text: '\(text)'")
+                    if !allText.isEmpty {
+                        allText += " "
+                    }
+                    allText += text
                 }
             },
             onComplete: {
                 // Flush any remaining buffer
                 await recognizer.flush()
 
-                // Get any final segments (including from flush)
-                let finalSegments = await recognizer.getNewSegments()
-                for segment in finalSegments {
-                    let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                    print("📤 Received final segment: '\(text)'")
-                    allSegments.append(text)
+                // Get any final text (including from flush)
+                let finalText = await recognizer.getNewText()
+                if !finalText.isEmpty {
+                    print("📤 Received final text: '\(finalText)'")
+                    if !allText.isEmpty {
+                        allText += " "
+                    }
+                    allText += finalText
                 }
 
                 await recognizer.stop()
             }
         )
 
-        let fullText = allSegments.joined(separator: " ")
+        let fullText = allText
 
         let expectedTurkish = "Kuraklık yüzünden yeterince ot bitmiyor. Biz de boyayı sulandırmak zorunda kaldık. Canlı başla uğraşıyoruz ama anca bu kadar oluyor."
         let comparison = base.compareWithReference(generated: fullText, expected: expectedTurkish)
@@ -149,27 +157,27 @@ struct StreamingTranscriptionTests {
             "Turkish streaming accuracy should be greater than 35%. Got \(String(format: "%.2f", comparison.accuracy))%")
     }
 
-    @Test func streamReturnsEmptyWhenNoSegmentReady() async throws {
+    @Test func streamReturnsEmptyWhenNoTextReady() async throws {
         let base = TestBase()
         let modelPath = try await base.downloadModelIfNeeded()
 
-        print("\n========== TEST: getNewSegments() returns empty array ==========")
+        print("\n========== TEST: getNewText() returns empty string ==========")
 
         let recognizer = StreamingRecognizer(modelPath: modelPath)
-        try await recognizer.loadModel()
+        // Model loaded in configure()
         try await recognizer.configure(language: "en")
 
-        // Poll immediately without adding audio - should return empty array
-        let segments1 = await recognizer.getNewSegments()
-        print("Poll before any audio: \(segments1.isEmpty ? "empty array ✅" : "\(segments1.count) segments (unexpected)")")
-        #expect(segments1.isEmpty, "Should return empty array when no audio has been added")
+        // Poll immediately without adding audio - should return empty string
+        let text1 = await recognizer.getNewText()
+        print("Poll before any audio: \(text1.isEmpty ? "empty string ✅" : "got text (unexpected)")")
+        #expect(text1.isEmpty, "Should return empty string when no audio has been added")
 
         // Add very small chunk (too small for a full segment)
         let smallChunk = [Float](repeating: 0.0, count: 1600)  // 0.1 second
-        try await recognizer.addAudioChunk(smallChunk)
+        await recognizer.addAudioChunk(smallChunk)
 
-        let segments2 = await recognizer.getNewSegments()
-        print("Poll after tiny chunk: \(segments2.isEmpty ? "empty array ✅" : "\(segments2.count) segments")")
+        let text2 = await recognizer.getNewText()
+        print("Poll after tiny chunk: \(text2.isEmpty ? "empty string ✅" : "got text")")
         // May or may not be empty - just testing the API works
 
         await recognizer.stop()

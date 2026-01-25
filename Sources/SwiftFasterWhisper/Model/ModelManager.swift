@@ -13,8 +13,8 @@ import faster_whisper
 public typealias DownloadProgressCallback = (String, Double, Int64, Int64) -> Void
 
 /// Manages model downloads and provides model control for transcription
-/// Combines model management utilities with actor-based model execution
-public actor ModelManager {
+/// Combines model management utilities with class-based model execution
+public class ModelManager {
 
     // MARK: - Instance Properties (Model Control)
 
@@ -23,7 +23,6 @@ public actor ModelManager {
     private var language: String?
     private var task: String = "transcribe"
     private var isModelBusy = false
-    private var isStreamingStarted = false
 
     // MARK: - Initialization
 
@@ -72,11 +71,7 @@ public actor ModelManager {
         guard let handle = modelHandle else {
             throw RecognitionError.modelNotLoaded
         }
-
-        if !isStreamingStarted {
-            whisper_start_streaming(handle, language, task)
-            isStreamingStarted = true
-        }
+        whisper_start_streaming(handle, language, task)
     }
 
     /// Stop streaming and reset state
@@ -84,11 +79,7 @@ public actor ModelManager {
         guard let handle = modelHandle else {
             return
         }
-
-        if isStreamingStarted {
-            whisper_stop_streaming(handle)
-            isStreamingStarted = false
-        }
+        whisper_stop_streaming(handle)
     }
 
     /// Add audio chunk to streaming buffer (incremental feeding)

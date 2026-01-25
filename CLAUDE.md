@@ -80,3 +80,4 @@ This project is based on learnings from IArabicSpeech. When implementing feature
 - Do not build project by yourself
 - Do not run swift test by yourself
 - instead of let self = self do let self
+- Do not create a single line functions

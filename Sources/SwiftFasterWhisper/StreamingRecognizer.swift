@@ -7,35 +7,16 @@
 
 import Foundation
 
-/// Delegate protocol for streaming recognizer callbacks
-public protocol StreamingRecognizerDelegate: AnyObject, Sendable {
-    /// Called when new transcription segments are available
-    /// - Parameters:
-    ///   - recognizer: The streaming recognizer instance
-    ///   - segments: New transcription segments
-    func recognizer(_ recognizer: StreamingRecognizer, didReceiveSegments segments: [TranscriptionSegment])
-
-    /// Called when streaming finishes or encounters an error
-    /// - Parameters:
-    ///   - recognizer: The streaming recognizer instance
-    ///   - error: Error if streaming failed, nil if stopped normally
-    func recognizer(_ recognizer: StreamingRecognizer, didFinishWithError error: Error?)
-}
-
-/// Handles streaming audio processing by sending chunks to C++ incrementally
-/// Uses ModelManager as the underlying model wrapper
+/// Handles streaming audio processing using producer-consumer pattern
+/// Producer: addAudioChunk() quickly adds chunks to queue
+/// Consumer: Background task processes chunks and sends to C++
 public actor StreamingRecognizer {
     private let modelManager: ModelManager
-    private var pendingSegments: [TranscriptionSegment] = []
-    private var isProcessing = false
+    private var pendingText: String = ""
 
-    /// Delegate for receiving streaming callbacks
-    private weak var _delegate: (any StreamingRecognizerDelegate)?
-
-    /// Set delegate (actor-isolated)
-    public func setDelegate(_ delegate: (any StreamingRecognizerDelegate)?) {
-        self._delegate = delegate
-    }
+    // Producer-consumer pattern
+    private var chunksQueue: [[Float]] = []
+    private var isConsuming = false
 
     /// Initialize with model path
     /// - Parameters:
@@ -44,23 +25,58 @@ public actor StreamingRecognizer {
         self.modelManager = ModelManager(modelPath: modelPath)
     }
 
-    /// Load the model
-    public func loadModel() async throws {
-        try await modelManager.loadModel()
-    }
-
-    /// Configure streaming parameters
+    /// Configure streaming parameters and load model if needed
     /// - Parameters:
     ///   - language: Language code (nil for auto-detection)
     ///   - task: "transcribe" or "translate"
     public func configure(language: String? = nil, task: String = "transcribe") async throws {
-        await modelManager.configure(language: language, task: task)
-        try await modelManager.startStreaming()
+        try await modelManager.loadModel()
+        modelManager.configure(language: language, task: task)
+        try modelManager.startStreaming()
     }
 
-    /// Add audio chunk for processing (sends directly to C++)
+    /// Add audio chunk to queue (producer - fast, non-blocking)
+    /// Starts consumer task if not already running
     /// - Parameter chunk: Audio samples (16kHz mono float32, recommended: 16000 samples = 1s)
-    public func addAudioChunk(_ chunk: [Float]) async throws {
+    public func addAudioChunk(_ chunk: [Float]) {
+        chunksQueue.append(chunk)
+
+        // Only start consumer if not already running
+        if !isConsuming {
+            consumeChunks()
+        }
+    }
+
+    /// Consume chunks from queue in background task
+    private func consumeChunks() {
+        isConsuming = true
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self else { return }
+
+            // Process all chunks in queue
+            while await !self.chunksQueue.isEmpty {
+                if let chunk = await self.dequeueChunk() {
+                    await self.processChunk(chunk)
+                }
+            }
+
+            // Done - reset flag via actor method
+            await self.resetConsuming()
+        }
+    }
+
+    private func resetConsuming() {
+        isConsuming = false
+    }
+
+    /// Dequeue next chunk from queue (actor-isolated)
+    private func dequeueChunk() -> [Float]? {
+        guard !chunksQueue.isEmpty else { return nil }
+        return chunksQueue.removeFirst()
+    }
+
+    /// Process a single chunk (consumer)
+    private func processChunk(_ chunk: [Float]) async {
         // Calculate chunk energy and duration
         let energy = chunk.reduce(0.0) { $0 + abs($1) } / Float(chunk.count)
         let chunkDuration = Double(chunk.count) / 16000.0  // Duration in seconds (assuming 16kHz)
@@ -71,7 +87,8 @@ public actor StreamingRecognizer {
         // Check if we should drop this chunk (only after first 10 chunks)
         if threshold > 0 && energy < threshold {
             let average = await EnergyStatistics.shared.averageEnergy
-            print("⚠️  Dropped low-energy chunk (energy: \(String(format: "%.6f", energy)), threshold: \(String(format: "%.6f", threshold)), avg: \(String(format: "%.6f", average)))")
+            let thresholdPercentage = average > 0 ? (threshold / average) * 100.0 : 0.0
+            print("⚠️  Dropped low-energy chunk (energy: \(String(format: "%.6f", energy)), threshold: \(String(format: "%.6f", threshold)) (\(String(format: "%.1f", thresholdPercentage))%), avg: \(String(format: "%.6f", average)))")
 
             // Update metrics even for dropped chunks (with 0 transcription time)
             await EnergyStatistics.shared.updateMetrics(
@@ -87,36 +104,45 @@ public actor StreamingRecognizer {
         let startTime = Date()
 
         // Send chunk directly to C++ streaming buffer
-        try await modelManager.addChunk(chunk)
+        do {
+            try await modelManager.addChunk(chunk)
 
-        // Synchronously poll for new segments
-        isProcessing = true
-        let newSegments = try await modelManager.getNewSegments()
-        isProcessing = false
+            // Synchronously poll for new segments
+            let newSegments = try await modelManager.getNewSegments()
 
-        let transcriptionTime = Date().timeIntervalSince(startTime)
+            let transcriptionTime = Date().timeIntervalSince(startTime)
 
-        // Update statistics with transcription metrics
-        await EnergyStatistics.shared.updateMetrics(
-            energy: energy,
-            chunkDuration: chunkDuration,
-            transcriptionTime: transcriptionTime,
-            wasDropped: false
-        )
+            // Update statistics with transcription metrics
+            await EnergyStatistics.shared.updateMetrics(
+                energy: energy,
+                chunkDuration: chunkDuration,
+                transcriptionTime: transcriptionTime,
+                wasDropped: false
+            )
 
-        if !newSegments.isEmpty {
-            pendingSegments.append(contentsOf: newSegments)
-            _delegate?.recognizer(self, didReceiveSegments: newSegments)
+            if !newSegments.isEmpty {
+                for segment in newSegments {
+                    let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !text.isEmpty {
+                        if !pendingText.isEmpty {
+                            pendingText += " "
+                        }
+                        pendingText += text
+                    }
+                }
+            }
+        } catch {
+            print("❌ Chunk processing error: \(error)")
         }
     }
 
-    /// Get new transcription segments (non-blocking poll)
-    /// Returns any segments that have been processed since last call
-    /// - Returns: Array of new segments, empty if none available
-    public func getNewSegments() -> [TranscriptionSegment] {
-        let segments = pendingSegments
-        pendingSegments.removeAll()
-        return segments
+    /// Get new transcription text (non-blocking poll)
+    /// Returns accumulated text since last call and clears it
+    /// - Returns: Transcribed text since last call
+    public func getNewText() -> String {
+        let text = pendingText
+        pendingText = ""
+        return text
     }
 
     /// Flush any remaining buffer and transcribe it
@@ -124,24 +150,30 @@ public actor StreamingRecognizer {
     public func flush() async {
         // Poll one more time for any final segments
         do {
-            isProcessing = true
             let finalSegments = try await modelManager.getNewSegments()
-            isProcessing = false
 
             if !finalSegments.isEmpty {
-                pendingSegments.append(contentsOf: finalSegments)
+                for segment in finalSegments {
+                    let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !text.isEmpty {
+                        if !pendingText.isEmpty {
+                            pendingText += " "
+                        }
+                        pendingText += text
+                    }
+                }
             }
         } catch {
-            isProcessing = false
             print("❌ Flush error: \(error)")
         }
     }
 
     /// Stop streaming and cleanup
     public func stop() async {
-        pendingSegments.removeAll()
-        await modelManager.stopStreaming()
-        _delegate?.recognizer(self, didFinishWithError: nil)
+        // Clear all state
+        chunksQueue.removeAll()
+        pendingText = ""
+        modelManager.stopStreaming()
     }
 
     /// Reset global energy statistics (useful for testing)

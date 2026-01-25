@@ -17,23 +17,21 @@ try await whisper.loadModel()
 let result = try await whisper.transcribe(audioFilePath: "audio.wav")
 print(result.text)
 
-// Or stream real-time audio (with auto-download)
+// Or stream real-time audio
 let recognizer = StreamingRecognizer()
-try await recognizer.loadModel()  // Auto-downloads model on first use
-await recognizer.configure(language: "en")
+try await recognizer.configure(language: "en")  // Auto-loads model
 
 // Or with custom model path
 let recognizer = StreamingRecognizer(modelPath: modelPath)
-try await recognizer.loadModel()
-await recognizer.configure(language: "en")
+try await recognizer.configure(language: "en")  // Loads model automatically
 
 // Feed 1s chunks (16000 samples at 16kHz)
-try await recognizer.addAudioChunk(audioChunk)
+await recognizer.addAudioChunk(audioChunk)
 
-// Poll for new segments (non-blocking)
-let segments = await recognizer.getNewSegments()
-for segment in segments {
-    print(segment.text)
+// Poll for new text (non-blocking)
+let text = await recognizer.getNewText()
+if !text.isEmpty {
+    print(text)
 }
 ```
 
@@ -43,14 +41,14 @@ SwiftFasterWhisper provides a Swift-native API for fast, on-device transcription
 
 ### Key Features
 
-- **Real-time Streaming**: Process audio using 4.2-second sliding window with 1-second chunks
-- **Near Real-Time Performance**: Background transcription with single-flight model execution guard
-- **Smart Buffer Management**: Automatically drops lowest-energy chunks when model is busy to preserve important audio content
-- **Non-blocking API**: Background transcription with async/await support
-- **Incremental Output**: Poll for segments using non-blocking `getNewSegments()` method
+- **Real-time Streaming**: Incremental chunk-by-chunk processing with immediate segment polling
+- **Adaptive Energy Filtering**: Automatically drops low-energy chunks based on processing speed
+- **Synchronous Processing**: Direct C++ calls with no actor overhead for maximum performance
+- **Non-blocking API**: async/await support for smooth UI integration
+- **Incremental Output**: Poll for text using non-blocking `getNewText()` method
 - **Multi-language Support**: Transcribe speech in any language
 - **Translation**: Translate from any language to English using Whisper's speech-to-English capability (not a replacement for dedicated MT models)
-- **Swift Concurrency**: Modern async/await with actor-based thread safety
+- **Swift Concurrency**: Modern async/await pattern
 - **Cancelable Operations**: Stop streaming at any time
 - **High Performance**: Leverages CTranslate2 for optimized inference
 
@@ -58,73 +56,90 @@ SwiftFasterWhisper provides a Swift-native API for fast, on-device transcription
 
 ### Components
 
-1. **ModelManager**: Model wrapper that handles both model management and transcription
-   - Runs transcription in background using Task.detached
-   - Uses busy flag to prevent concurrent model calls (single-flight execution)
+1. **ModelManager**: Synchronous model wrapper
+   - Direct calls to C++ transcription engine
+   - No background tasks or busy flags
    - Provides static utilities for downloading and managing models
-   - No knowledge of streaming or buffering
 
-2. **StreamingRecognizer**: Handles streaming orchestration
-   - Buffers audio chunks into 4.2s windows (67200 samples)
-   - Calls ModelManager.transcribe() when window is ready
-   - Removes processed window from buffer after each transcription
-   - Smart overflow handling: drops lowest-energy chunks when model is busy to preserve important audio
+2. **StreamingRecognizer**: Actor-based producer-consumer streaming orchestration
+   - **Producer**: `addAudioChunk()` quickly adds chunks to actor-isolated queue
+   - **Consumer**: Background task processes chunks from queue and sends to C++
+   - Polls for new segments after each chunk is processed
+   - Adaptive energy filtering based on processing speed
+   - Thread-safe via Swift actor isolation
 
-3. **C++ Wrapper**: Bridge between Swift and faster-whisper engine (`transcribe.cpp`)
+3. **EnergyStatistics**: Global adaptive threshold calculator (actor-based)
+   - Tracks processing speed ratio (transcription time / audio duration)
+   - Automatically adjusts energy threshold based on model performance
+   - Drops low-energy chunks when ratio > 1.0 (model falling behind)
+   - Thread-safe via Swift actor isolation
 
-4. **CTranslate2 Backend**: Optimized runtime for Whisper model inference
+4. **C++ Streaming Buffer**: Manages audio window and transcription
+   - Accumulates chunks until 4-second window ready
+   - Decides when to transcribe based on buffer size
+   - Handles window sliding and overlap
+
+5. **CTranslate2 Backend**: Optimized runtime for Whisper model inference
 
 ### Streaming Approach
 
-**Streaming Parameters (defaults):**
+**Streaming Parameters:**
 ```
 Chunk size:   1.0s  (16000 samples at 16kHz)
-Window size:  4.2s  (67200 samples)
-Shift size:   4.2s  (67200 samples per submission)
-Overlap:      0.0s  (no overlap, clean boundaries)
+Window size:  4.0s  (64000 samples in C++ buffer)
+Shift size:   4.0s  (complete window processed each time)
+Overlap:      0.2s  (small overlap for continuity)
 ```
 
 **TL;DR:**
 - Feed 1s audio chunks via `addAudioChunk()`
-- Internally buffers until 4.2s of audio accumulated
-- Submits 4.2s window for transcription (removes from buffer immediately)
-- Poll for segments using `await getNewSegments()`
+- C++ accumulates until 4s window ready
+- Synchronously polls for segments after each chunk
+- Adaptive energy filtering drops low-quality chunks when model falls behind
 
 ---
 
-SwiftFasterWhisper uses a concurrent streaming strategy for real-time transcription:
+SwiftFasterWhisper uses a synchronous streaming strategy with adaptive filtering:
 
 **Design:**
-- **4.2-second audio window** (67200 samples at 16kHz) for transcription
+- **4-second audio window** in C++ buffer for transcription
 - **1-second chunks** (16000 samples) recommended for feeding audio
-- **4.2-second shift** between transcriptions (no overlap, clean boundaries)
-- **Background transcription**: Runs in Task, doesn't block main thread
-- **Single-flight execution**: Busy flag prevents concurrent model calls
-- **Intelligent buffer management**: Drops lowest-energy chunks when buffer is full and model is busy
+- **Synchronous polling**: After each chunk, immediately poll for new segments
+- **Adaptive energy filtering**: Automatically drops low-energy chunks when processing speed ratio > 1.0
+- **Global statistics**: Tracks performance across all sessions for accurate threshold calculation
 
 **How It Works:**
-1. User calls `addAudioChunk()` with 1s chunks (non-blocking, returns immediately)
-2. StreamingRecognizer accumulates chunks into a buffer
-3. When buffer reaches 4.2s and model is not busy:
-   - Extracts 4.2s window from buffer
-   - Spawns background Task calling ModelManager.transcribe()
-   - Sets busy flag to prevent concurrent calls
-   - Removes the window from buffer
-4. If buffer is full and model is busy:
-   - Scans all 1-second chunks in buffer and calculates energy for each
-   - Drops the chunk with the lowest energy (prioritizes keeping important audio content)
-   - This automatically removes silence first while preserving speech
-5. When transcription completes:
-   - Stores segments for polling via `getNewSegments()`
-   - Clears busy flag
-6. User polls `await getNewSegments()` to retrieve new segments (non-blocking)
+1. **Producer**: User calls `addAudioChunk()` - actor-isolated append to queue
+2. **Consumer**: Background task dequeues chunk and processes it:
+   - Calculates chunk energy (average absolute amplitude)
+   - If ratio > 1.0 (model falling behind):
+     - Threshold = average_energy × (ratio - 1.0)
+     - Example: ratio = 1.2 → threshold = average × 0.2 (20%)
+     - Drops chunk if energy < threshold
+   - Accepted chunks sent to C++ streaming buffer
+3. C++ accumulates until 4s window ready
+4. Transcribes and returns segments
+5. Updates global statistics (transcription time, chunk duration)
+6. Returns segments to Swift layer via polling
 
-**Concurrency Benefits:**
-- Non-blocking API allows UI updates while transcribing
-- Background tasks enable parallel audio feeding and transcription
-- Busy flag prevents model overload (one in-flight transcription at a time)
-- Smart buffer management preserves important audio by dropping low-energy chunks when needed
-- Thread-safe segment queue using Swift actors
+**Actor Isolation Benefits:**
+- Thread-safe queue access without manual locks
+- Clean separation between producer (user thread) and consumer (background task)
+- Swift concurrency handles synchronization automatically
+
+**Adaptive Filtering Benefits:**
+- Automatically adjusts to system performance
+- Drops silence/background noise first (lowest energy)
+- Preserves important speech (higher energy)
+- Prevents buffer overflow and audio loss
+- Self-tuning based on actual processing speed
+
+**Performance Tracking:**
+- `ratio = totalTranscriptionTime / totalChunksDuration`
+- ratio < 1.0: Model faster than real-time → minimal/no dropping (1% threshold)
+- ratio = 1.0: Perfect real-time → baseline dropping
+- ratio > 1.0: Model falling behind → aggressive dropping to catch up
+- Statistics persist across sessions for stable thresholds
 
 ## Why SwiftFasterWhisper?
 
@@ -295,47 +310,24 @@ let result = try await whisper.translate(audioFilePath: "unknown.wav")
 
 ### Real-time Streaming
 
-#### Delegate Pattern
-
 ```swift
 import SwiftFasterWhisper
-
-class MyDelegate: StreamingRecognizerDelegate {
-    func recognizer(_ recognizer: StreamingRecognizer, didReceiveSegments segments: [TranscriptionSegment]) {
-        for segment in segments {
-            print("[\(segment.start)s - \(segment.end)s] \(segment.text)")
-        }
-    }
-
-    func recognizer(_ recognizer: StreamingRecognizer, didFinishWithError error: Error?) {
-        if let error = error {
-            print("Error: \(error)")
-        } else {
-            print("Streaming finished")
-        }
-    }
-}
 
 // Setup
 let modelPath = try await getModelPath()
 let recognizer = StreamingRecognizer(modelPath: modelPath)
-try await recognizer.loadModel()
-
-// Keep strong reference to delegate to prevent deallocation
-let delegate = MyDelegate()
-await recognizer.setDelegate(delegate)
-await recognizer.configure(language: "en")
+try await recognizer.configure(language: "en")
 
 // Feed audio chunks (1 second chunks = 16000 samples at 16kHz recommended)
 // Chunks are accumulated in a 4.2-second sliding window
 while streaming {
     let chunk: [Float] = getNextAudioChunk()  // Your audio capture (16000 samples = 1s)
-    try await recognizer.addAudioChunk(chunk)
+    await recognizer.addAudioChunk(chunk)  // Actor-isolated, thread-safe
 
-    // Poll for new segments (non-blocking, retrieves from internal queue)
-    let newSegments = await recognizer.getNewSegments()
-    for segment in newSegments {
-        print("New segment: \(segment.text)")
+    // Poll for new text (non-blocking)
+    let text = await recognizer.getNewText()
+    if !text.isEmpty {
+        print(text)
     }
 }
 
@@ -352,16 +344,16 @@ await recognizer.configure(language: "en")
 // Feed audio chunks in background
 Task {
     for await chunk in audioStream {  // Your audio stream
-        try await recognizer.addAudioChunk(chunk)
+        await recognizer.addAudioChunk(chunk)  // Actor-isolated
     }
     await recognizer.stop()
 }
 
 // Poll for segments in main loop
 while streaming {
-    let segments = await recognizer.getNewSegments()
-    for segment in segments {
-        print("[\(segment.start)s - \(segment.end)s] \(segment.text)")
+    let text = await recognizer.getNewText()
+    if !text.isEmpty {
+        print(text)
     }
 
     // Small delay to avoid tight loop
@@ -369,14 +361,13 @@ while streaming {
 }
 ```
 
-**Important: `getNewSegments()` Behavior**
+**Important: `getNewText()` Behavior**
 
-The `getNewSegments()` method:
-- Returns **array of new segments** from the internal queue
-- Is **non-blocking** - returns immediately with segments or empty array
-- Does **not** return duplicate segments (automatic deduplication)
+The `getNewText()` method:
+- Returns **accumulated text** since last call
+- Is **non-blocking** - returns immediately with text or empty string
+- **Clears** the accumulated text after returning it
 - Background task handles the blocking transcription calls
-- Thread-safe segment queue using Swift actors
 
 This means you can call it repeatedly in your main loop without blocking the UI.
 

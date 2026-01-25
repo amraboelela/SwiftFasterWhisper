@@ -25,10 +25,10 @@ struct StreamingTranslationTests {
         print("Full audio duration: \(String(format: "%.2f", Double(fullAudio.count) / 16000.0))s")
 
         let recognizer = StreamingRecognizer(modelPath: modelPath)
-        try await recognizer.loadModel()
+        // Model loaded in configure()
         try await recognizer.configure(language: "tr", task: "translate")
 
-        var allSegments: [String] = []
+        var allText = ""
 
         print("\n--- Sending 1s audio chunks ---")
 
@@ -37,33 +37,37 @@ struct StreamingTranslationTests {
             onChunk: { chunkNumber, chunk, isLast in
                 print("[Chunk \(chunkNumber)] Sending \(String(format: "%.2f", Float(chunk.count) / 16000.0))s")
 
-                try await recognizer.addAudioChunk(chunk)
+                await recognizer.addAudioChunk(chunk)
 
-                // Check for new segments (non-blocking call, returns empty array if not ready)
-                let segments = await recognizer.getNewSegments()
-                for segment in segments {
-                    let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                    print("📤 Received segment: '\(text)'")
-                    allSegments.append(text)
+                // Check for new text (non-blocking)
+                let text = await recognizer.getNewText()
+                if !text.isEmpty {
+                    print("📤 Received text: '\(text)'")
+                    if !allText.isEmpty {
+                        allText += " "
+                    }
+                    allText += text
                 }
             },
             onComplete: {
                 // Flush any remaining buffer
                 await recognizer.flush()
 
-                // Get any final segments (including from flush)
-                let finalSegments = await recognizer.getNewSegments()
-                for segment in finalSegments {
-                    let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                    print("📤 Received final segment: '\(text)'")
-                    allSegments.append(text)
+                // Get any final text (including from flush)
+                let finalText = await recognizer.getNewText()
+                if !finalText.isEmpty {
+                    print("📤 Received final text: '\(finalText)'")
+                    if !allText.isEmpty {
+                        allText += " "
+                    }
+                    allText += finalText
                 }
 
                 await recognizer.stop()
             }
         )
 
-        let fullText = allSegments.joined(separator: " ").lowercased()
+        let fullText = allText.lowercased()
 
         let expectedTurkish = "Kuraklık yüzünden yeterince ot bitmiyor. Biz de boyayı sulandırmak zorunda kaldık. Canlı başla uğraşıyoruz ama anca bu kadar oluyor."
         let expectedEnglish = "we've had enough of the drought. we had to water the plant. we're trying our best but that's all we can do."
@@ -94,10 +98,10 @@ struct StreamingTranslationTests {
         print("Full audio duration: \(String(format: "%.2f", Double(fullAudio.count) / 16000.0))s")
 
         let recognizer = StreamingRecognizer(modelPath: modelPath)
-        try await recognizer.loadModel()
+        // Model loaded in configure()
         try await recognizer.configure(language: "tr", task: "translate")
 
-        var allSegments: [String] = []
+        var allText = ""
 
         print("\n--- Sending 1s audio chunks ---")
 
@@ -106,33 +110,37 @@ struct StreamingTranslationTests {
             onChunk: { chunkNumber, chunk, isLast in
                 print("[Chunk \(chunkNumber)] Sending \(String(format: "%.2f", Float(chunk.count) / 16000.0))s")
 
-                try await recognizer.addAudioChunk(chunk)
+                await recognizer.addAudioChunk(chunk)
 
-                // Check for new segments (non-blocking call, returns empty array if not ready)
-                let segments = await recognizer.getNewSegments()
-                for segment in segments {
-                    let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                    print("📤 Received segment: '\(text)'")
-                    allSegments.append(text)
+                // Check for new text (non-blocking)
+                let text = await recognizer.getNewText()
+                if !text.isEmpty {
+                    print("📤 Received text: '\(text)'")
+                    if !allText.isEmpty {
+                        allText += " "
+                    }
+                    allText += text
                 }
             },
             onComplete: {
                 // Flush any remaining buffer
                 await recognizer.flush()
 
-                // Get any final segments (including from flush)
-                let finalSegments = await recognizer.getNewSegments()
-                for segment in finalSegments {
-                    let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                    print("📤 Received final segment: '\(text)'")
-                    allSegments.append(text)
+                // Get any final text (including from flush)
+                let finalText = await recognizer.getNewText()
+                if !finalText.isEmpty {
+                    print("📤 Received final text: '\(finalText)'")
+                    if !allText.isEmpty {
+                        allText += " "
+                    }
+                    allText += finalText
                 }
 
                 await recognizer.stop()
             }
         )
 
-        let fullText = allSegments.joined(separator: " ").lowercased()
+        let fullText = allText.lowercased()
 
         let expectedTurkish = "...bir akına bile çıkamadık. Neden? Çünkü Bey'imizin çıbanlı başı dertte.  Bütün oba halkı senin yaşlılığından şikayetçi."
         let expectedEnglish = "we couldn't even go to an action. why? because our bey's wife is in trouble. the whole tribe is complaining about your old age."
@@ -168,10 +176,10 @@ struct StreamingTranslationTests {
         print("Full audio duration: \(String(format: "%.2f", Double(fullAudio.count) / 16000.0))s")
 
         let recognizer = StreamingRecognizer(modelPath: modelPath)
-        try await recognizer.loadModel()
+        // Model loaded in configure()
         try await recognizer.configure(language: "tr", task: "translate")
 
-        var allSegments: [String] = []
+        var allText = ""
 
         print("\n--- Sending 1s audio chunks ---")
 
@@ -180,33 +188,37 @@ struct StreamingTranslationTests {
             onChunk: { chunkNumber, chunk, isLast in
                 print("[Chunk \(chunkNumber)] Sending \(String(format: "%.2f", Float(chunk.count) / 16000.0))s")
 
-                try await recognizer.addAudioChunk(chunk)
+                await recognizer.addAudioChunk(chunk)
 
-                // Check for new segments (non-blocking call, returns empty array if not ready)
-                let segments = await recognizer.getNewSegments()
-                for segment in segments {
-                    let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                    print("📤 Received segment: '\(text)'")
-                    allSegments.append(text)
+                // Check for new text (non-blocking)
+                let text = await recognizer.getNewText()
+                if !text.isEmpty {
+                    print("📤 Received text: '\(text)'")
+                    if !allText.isEmpty {
+                        allText += " "
+                    }
+                    allText += text
                 }
             },
             onComplete: {
                 // Flush any remaining buffer
                 await recognizer.flush()
 
-                // Get any final segments (including from flush)
-                let finalSegments = await recognizer.getNewSegments()
-                for segment in finalSegments {
-                    let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                    print("📤 Received final segment: '\(text)'")
-                    allSegments.append(text)
+                // Get any final text (including from flush)
+                let finalText = await recognizer.getNewText()
+                if !finalText.isEmpty {
+                    print("📤 Received final text: '\(finalText)'")
+                    if !allText.isEmpty {
+                        allText += " "
+                    }
+                    allText += finalText
                 }
 
                 await recognizer.stop()
             }
         )
 
-        let fullText = allSegments.joined(separator: " ").lowercased()
+        let fullText = allText.lowercased()
 
         let expectedTurkish = "Başka bir çare bulmalıyız. Çok arıyorum."
         let expectedEnglish = "we have to find another way. i'm looking very hard."

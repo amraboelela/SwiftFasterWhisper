@@ -66,10 +66,10 @@ struct StreamingSegmentsTranscriptionTests {
 
         // Use streaming recognizer
         let recognizer = StreamingRecognizer(modelPath: modelPath)
-        try await recognizer.loadModel()
+        // Model loaded in configure()
         try await recognizer.configure(language: "tr", task: "transcribe")
 
-        var allSegments: [String] = []
+        var allText = ""
 
         print("\n--- Sending 1s audio chunks (simulating real-time) ---")
 
@@ -77,45 +77,48 @@ struct StreamingSegmentsTranscriptionTests {
         try await producer.start(
             onChunk: { chunkNumber, chunk, isLast in
                 print("[Chunk \(chunkNumber)] Sending \(String(format: "%.2f", Float(chunk.count) / 16000.0))s")
-                try await recognizer.addAudioChunk(chunk)
+                await recognizer.addAudioChunk(chunk)
 
-                // Check for new segments (non-blocking poll)
-                let segments = await recognizer.getNewSegments()
-                for segment in segments {
-                    let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                    print("📤 Received segment: '\(text)'")
-                    allSegments.append(text)
+                // Check for new text (non-blocking poll)
+                let text = await recognizer.getNewText()
+                if !text.isEmpty {
+                    print("📤 Received text: '\(text)'")
+                    if !allText.isEmpty {
+                        allText += " "
+                    }
+                    allText += text
                 }
             },
             onComplete: {
                 // Flush any remaining buffer
                 await recognizer.flush()
 
-                // Get any final segments (including from flush)
-                let finalSegments = await recognizer.getNewSegments()
-                for segment in finalSegments {
-                    let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                    print("📤 Received final segment: '\(text)'")
-                    allSegments.append(text)
+                // Get any final text (including from flush)
+                let finalText = await recognizer.getNewText()
+                if !finalText.isEmpty {
+                    print("📤 Received final text: '\(finalText)'")
+                    if !allText.isEmpty {
+                        allText += " "
+                    }
+                    allText += finalText
                 }
 
                 await recognizer.stop()
             }
         )
 
-        let generatedText = allSegments.joined(separator: " ")
         print("\nExpected: \(expectedText)")
-        print("Generated: \(generatedText)")
+        print("Generated: \(allText)")
 
-        // Skip comparison if no segments generated
-        guard !generatedText.isEmpty else {
-            print("⚠️  No segments generated - audio too short for 4s window")
+        // Skip comparison if no text generated
+        guard !allText.isEmpty else {
+            print("⚠️  No text generated - audio too short for 4s window")
             print("================================================================\n")
             return
         }
 
         // Compare using Turkish-aware comparison
-        let comparison = base.compareWithReference(generated: generatedText, expected: expectedText)
+        let comparison = base.compareWithReference(generated: allText, expected: expectedText)
 
         print("\nResults:")
         print("  Accuracy: \(String(format: "%.1f", comparison.accuracy))%")
