@@ -7,7 +7,7 @@ let ctranslate2Path = "Frameworks/CTranslate2.xcframework"
 let package = Package(
     name: "SwiftFasterWhisper",
     platforms: [
-        .macOS(.v15),
+        .macOS(.v13),
         .iOS(.v15)
     ],
     products: [

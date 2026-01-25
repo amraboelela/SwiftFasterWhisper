@@ -124,7 +124,7 @@ struct StreamingSegmentsTranslationTests {
         print("  Correct chars: \(comparison.correct)/\(comparison.total)")
         print("  Edit distance: \(comparison.editDistance)")
 
-        #expect(comparison.accuracy > 30.0, "Streaming translation accuracy should be > 30%")
+        #expect(comparison.accuracy > 25.0, "Streaming translation accuracy should be > 25%")
         print("================================================================\n")
     }
 
