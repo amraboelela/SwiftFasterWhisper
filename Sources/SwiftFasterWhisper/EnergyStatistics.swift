@@ -18,13 +18,6 @@ actor EnergyStatistics {
 
     private init() {}
 
-    /// Check if buffer is a dummy buffer (used for flushing in tests)
-    /// - Parameter buffer: Audio samples to check
-    /// - Returns: True if all samples are 0.1 (dummy buffer)
-    static func isDummyBuffer(_ buffer: [Float]) -> Bool {
-        return buffer.allSatisfy { abs($0 - 0.1) < 0.001 }
-    }
-
     var averageEnergy: Float {
         return _averageEnergy
     }

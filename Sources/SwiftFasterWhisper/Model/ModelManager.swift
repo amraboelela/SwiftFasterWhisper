@@ -165,14 +165,6 @@ public actor ModelManager {
     ///   - chunk: Audio samples (16kHz mono float32)
     /// - Returns: Array of transcribed text strings
     public func processChunk(_ chunk: [Float]) async -> [String] {
-        #if DEBUG
-        // Check if this is a dummy buffer
-        let isDummy = EnergyStatistics.isDummyBuffer(chunk)
-        if isDummy {
-            print("🔍 DEBUG: processChunk received dummy buffer (\(chunk.count) samples, all ~0.1) - allowing through for flushing")
-        }
-        #endif
-
         // Calculate chunk energy and duration (pure computation, safe anywhere)
         let energy = chunk.reduce(0.0) { $0 + abs($1) } / Float(chunk.count)
         let chunkDuration = Double(chunk.count) / 16000.0
@@ -250,60 +242,5 @@ public actor ModelManager {
             print("❌ Chunk processing error: \(error)")
             return []
         }
-    }
-
-    // MARK: - Transcription
-
-    /// Process audio and return transcription segments
-    /// - Parameter audio: Audio samples (16kHz mono float32)
-    /// - Returns: Array of transcription segments
-    public func transcribe(audio: [Float]) async -> [TranscriptionSegment] {
-        guard !audio.isEmpty else {
-            return []
-        }
-
-        #if DEBUG
-        // Skip dummy chunks in debug mode (all 0.1 values used for flushing in tests)
-        let isDummy = EnergyStatistics.isDummyBuffer(audio)
-        if isDummy {
-            print("🔍 DEBUG: Skipping dummy buffer (\(audio.count) samples, all ~0.1)")
-            return []
-        } else {
-            // Show sample values for non-dummy buffers
-            let sampleValues = audio.prefix(5).map { String(format: "%.3f", $0) }.joined(separator: ", ")
-            print("🔍 DEBUG: Processing real buffer (\(audio.count) samples, first 5: [\(sampleValues)])")
-        }
-        #endif
-
-        guard let handle = modelHandle else {
-            print("❌ Model not loaded")
-            return []
-        }
-
-        // All C++ calls inside actor (safe)
-        audio.withUnsafeBufferPointer { buffer in
-            whisper_add_audio_chunk(handle, buffer.baseAddress, UInt(audio.count))
-        }
-
-        var count: UInt = 0
-        let cSegments = whisper_get_new_segments(handle, &count)
-
-        guard count > 0, let cSegments = cSegments else {
-            return []
-        }
-        defer { whisper_free_segments(cSegments, count) }
-
-        var result: [TranscriptionSegment] = []
-        for i in 0..<Int(count) {
-            let seg = cSegments[i]
-            let text = seg.text != nil ? String(cString: seg.text) : ""
-            result.append(TranscriptionSegment(
-                text: text,
-                start: seg.start,
-                end: seg.end
-            ))
-        }
-
-        return result
     }
 }
