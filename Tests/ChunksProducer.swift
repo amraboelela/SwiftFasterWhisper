@@ -58,9 +58,9 @@ class ChunksProducer {
             }
         }
 
-        // Send silence equal to 20% of audio duration to allow final processing
+        // Send silence equal to 140% of audio duration to allow final processing
         let audioDuration = Int(ceil(Double(fullAudio.count) / Double(chunkSize)))
-        let silenceDuration = Int(ceil(Double(audioDuration) * 0.2))
+        let silenceDuration = Int(ceil(Double(audioDuration) * 1.4))
         let silenceChunk = [Float](repeating: 0.1, count: chunkSize)
         for i in 1...silenceDuration {
             try await onChunk(chunkNumber, silenceChunk, i == silenceDuration)

@@ -37,10 +37,7 @@ struct StreamingTranslationTests {
             onChunk: { chunkNumber, chunk, isLast in
                 print("[Chunk \(chunkNumber)] Sending \(String(format: "%.2f", Float(chunk.count) / 16000.0))s")
 
-                await recognizer.addAudioChunk(chunk)
-
-                // Check for new text (non-blocking)
-                let text = await recognizer.getNewText()
+                let text = await recognizer.addAudioChunk(chunk)
                 if !text.isEmpty {
                     print("📤 Received text: '\(text)'")
                     if !allText.isEmpty {
@@ -51,7 +48,7 @@ struct StreamingTranslationTests {
             },
             onComplete: {
                 // Get any final text
-                let finalText = await recognizer.getNewText()
+                let finalText = await recognizer.addAudioChunk([])
                 if !finalText.isEmpty {
                     print("📤 Received final text: '\(finalText)'")
                     if !allText.isEmpty {
@@ -107,10 +104,7 @@ struct StreamingTranslationTests {
             onChunk: { chunkNumber, chunk, isLast in
                 print("[Chunk \(chunkNumber)] Sending \(String(format: "%.2f", Float(chunk.count) / 16000.0))s")
 
-                await recognizer.addAudioChunk(chunk)
-
-                // Check for new text (non-blocking)
-                let text = await recognizer.getNewText()
+                let text = await recognizer.addAudioChunk(chunk)
                 if !text.isEmpty {
                     print("📤 Received text: '\(text)'")
                     if !allText.isEmpty {
@@ -121,7 +115,7 @@ struct StreamingTranslationTests {
             },
             onComplete: {
                 // Get any final text
-                let finalText = await recognizer.getNewText()
+                let finalText = await recognizer.addAudioChunk([])
                 if !finalText.isEmpty {
                     print("📤 Received final text: '\(finalText)'")
                     if !allText.isEmpty {
@@ -182,10 +176,7 @@ struct StreamingTranslationTests {
             onChunk: { chunkNumber, chunk, isLast in
                 print("[Chunk \(chunkNumber)] Sending \(String(format: "%.2f", Float(chunk.count) / 16000.0))s")
 
-                await recognizer.addAudioChunk(chunk)
-
-                // Check for new text (non-blocking)
-                let text = await recognizer.getNewText()
+                let text = await recognizer.addAudioChunk(chunk)
                 if !text.isEmpty {
                     print("📤 Received text: '\(text)'")
                     if !allText.isEmpty {
@@ -196,7 +187,7 @@ struct StreamingTranslationTests {
             },
             onComplete: {
                 // Get any final text
-                let finalText = await recognizer.getNewText()
+                let finalText = await recognizer.addAudioChunk([])
                 if !finalText.isEmpty {
                     print("📤 Received final text: '\(finalText)'")
                     if !allText.isEmpty {

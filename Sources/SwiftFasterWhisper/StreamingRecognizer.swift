@@ -16,6 +16,7 @@ public actor StreamingRecognizer {
 
     // Producer-consumer pattern
     private var chunksQueue: [[Float]] = []
+    private var readIndex = 0
     private var isConsuming = false
 
     /// Initialize with model path
@@ -31,115 +32,79 @@ public actor StreamingRecognizer {
     ///   - task: "transcribe" or "translate"
     public func configure(language: String? = nil, task: String = "transcribe") async throws {
         try await modelManager.loadModel()
-        modelManager.configure(language: language, task: task)
-        try modelManager.startStreaming()
+        await modelManager.configure(language: language, task: task)
+        try await modelManager.startStreaming()
     }
 
     /// Add audio chunk to queue (producer - fast, non-blocking)
     /// Starts consumer task if not already running
-    /// - Parameter chunk: Audio samples (16kHz mono float32, recommended: 16000 samples = 1s)
-    public func addAudioChunk(_ chunk: [Float]) {
+    /// - Parameter chunk: Audio samples (16kHz mono float32, typically 30ms chunks work well)
+    /// - Returns: New transcribed text since last call
+    public func addAudioChunk(_ chunk: [Float]) -> String {
         chunksQueue.append(chunk)
 
-        // Only start consumer if not already running
+        // Backpressure warning
+        if chunksQueue.count > 200 {
+            print("⚠️  Audio backlog growing: \(chunksQueue.count) chunks queued")
+        }
+
+        // Start consumer if not already running (set flag first to prevent race)
         if !isConsuming {
-            consumeChunks()
+            isConsuming = true
+            startConsumer()
         }
+
+        return getNewText()
     }
 
-    /// Consume chunks from queue in background task
-    private func consumeChunks() {
-        isConsuming = true
-        Task.detached(priority: .userInitiated) { [weak self] in
+    /// Start the consumer loop
+    private func startConsumer() {
+        Task(priority: .userInitiated) { [weak self] in
             guard let self else { return }
-
-            // Process all chunks in queue
-            while await !self.chunksQueue.isEmpty {
-                if let chunk = await self.dequeueChunk() {
-                    await self.processChunk(chunk)
-                }
-            }
-
-            // Done - reset flag via actor method
-            await self.resetConsuming()
+            await self.consumeLoop()
         }
     }
 
-    private func resetConsuming() {
-        isConsuming = false
+    /// Consume chunks in a loop (actor-owned)
+    private func consumeLoop() async {
+        while true {
+            guard let chunk = dequeueChunk() else {
+                // Queue exhausted - reset consuming flag and exit
+                isConsuming = false
+                return
+            }
+            let texts = await modelManager.processChunk(chunk)
+            appendTexts(texts)
+        }
     }
 
-    /// Dequeue next chunk from queue (actor-isolated)
+    /// Dequeue next chunk from queue (O(1) using index)
     private func dequeueChunk() -> [Float]? {
-        guard !chunksQueue.isEmpty else { return nil }
-        return chunksQueue.removeFirst()
+        guard readIndex < chunksQueue.count else {
+            // Queue exhausted - reset for next batch
+            chunksQueue.removeAll()
+            readIndex = 0
+            return nil
+        }
+        let chunk = chunksQueue[readIndex]
+        readIndex += 1
+        return chunk
     }
 
-    /// Process a single chunk (consumer)
-    private func processChunk(_ chunk: [Float]) async {
-        // Calculate chunk energy and duration
-        let energy = chunk.reduce(0.0) { $0 + abs($1) } / Float(chunk.count)
-        let chunkDuration = Double(chunk.count) / 16000.0  // Duration in seconds (assuming 16kHz)
-
-        // Get current threshold from statistics
-        let threshold = await EnergyStatistics.shared.getCurrentThreshold()
-
-        // Check if we should drop this chunk (only after first 10 chunks)
-        if threshold > 0 && energy < threshold {
-            let average = await EnergyStatistics.shared.averageEnergy
-            let thresholdPercentage = average > 0 ? (threshold / average) * 100.0 : 0.0
-            print("⚠️  Dropped low-energy chunk (energy: \(String(format: "%.6f", energy)), threshold: \(String(format: "%.6f", threshold)) (\(String(format: "%.1f", thresholdPercentage))%), avg: \(String(format: "%.6f", average)))")
-
-            // Update metrics even for dropped chunks (with 0 transcription time)
-            await EnergyStatistics.shared.updateMetrics(
-                energy: energy,
-                chunkDuration: chunkDuration,
-                transcriptionTime: 0.0,
-                wasDropped: true
-            )
-            return
-        }
-
-        // Measure transcription time
-        let startTime = Date()
-
-        // Send chunk directly to C++ streaming buffer
-        do {
-            try await modelManager.addChunk(chunk)
-
-            // Synchronously poll for new segments
-            let newSegments = try await modelManager.getNewSegments()
-
-            let transcriptionTime = Date().timeIntervalSince(startTime)
-
-            // Update statistics with transcription metrics
-            await EnergyStatistics.shared.updateMetrics(
-                energy: energy,
-                chunkDuration: chunkDuration,
-                transcriptionTime: transcriptionTime,
-                wasDropped: false
-            )
-
-            if !newSegments.isEmpty {
-                for segment in newSegments {
-                    let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !text.isEmpty {
-                        if !pendingText.isEmpty {
-                            pendingText += " "
-                        }
-                        pendingText += text
-                    }
-                }
+    /// Append texts to pending text (actor-isolated, fast)
+    private func appendTexts(_ texts: [String]) {
+        for text in texts {
+            if !pendingText.isEmpty {
+                pendingText += " "
             }
-        } catch {
-            print("❌ Chunk processing error: \(error)")
+            pendingText += text
         }
     }
 
     /// Get new transcription text (non-blocking poll)
     /// Returns accumulated text since last call and clears it
     /// - Returns: Transcribed text since last call
-    public func getNewText() -> String {
+    private func getNewText() -> String {
         let text = pendingText
         pendingText = ""
         return text
@@ -149,8 +114,10 @@ public actor StreamingRecognizer {
     public func stop() async {
         // Clear all state
         chunksQueue.removeAll()
+        readIndex = 0
+        isConsuming = false
         pendingText = ""
-        modelManager.stopStreaming()
+        await modelManager.stopStreaming()
     }
 
     /// Reset global energy statistics (useful for testing)

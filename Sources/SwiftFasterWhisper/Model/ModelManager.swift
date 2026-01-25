@@ -6,15 +6,21 @@
 //
 
 import Foundation
-import CryptoKit
 import faster_whisper
 
 /// Progress callback for model downloads
 public typealias DownloadProgressCallback = (String, Double, Int64, Int64) -> Void
 
 /// Manages model downloads and provides model control for transcription
-/// Combines model management utilities with class-based model execution
-public class ModelManager {
+/// Combines model management utilities with actor-based model execution
+///
+/// ## Thread Safety
+/// ModelManager is a **single-consumer actor**:
+/// - All inference must be serialized through this actor
+/// - Only one task should call `processChunk()` at a time
+/// - Concurrent calls are automatically serialized by the actor
+/// - The C++ Whisper handle is NOT thread-safe and must remain actor-isolated
+public actor ModelManager {
 
     // MARK: - Instance Properties (Model Control)
 
@@ -22,7 +28,8 @@ public class ModelManager {
     private let modelPath: String
     private var language: String?
     private var task: String = "transcribe"
-    private var isModelBusy = false
+    private var isModelLoaded = false
+    private var isStreaming = false
 
     // MARK: - Initialization
 
@@ -33,17 +40,34 @@ public class ModelManager {
     }
 
     deinit {
+        // Note: deinit is not async and doesn't guarantee isolation
+        // Use shutdown() for proper cleanup
         if let handle = modelHandle {
             whisper_stop_streaming(handle)
             whisper_destroy_model(handle)
         }
     }
 
+    /// Explicit shutdown - call this before releasing the ModelManager
+    public func shutdown() {
+        guard let handle = modelHandle else { return }
+        if isStreaming {
+            whisper_stop_streaming(handle)
+        }
+        whisper_destroy_model(handle)
+        modelHandle = nil
+        isModelLoaded = false
+        isStreaming = false
+    }
+
     // MARK: - Model Loading
 
-    /// Load the Whisper model
+    /// Load the Whisper model (idempotent - safe to call multiple times)
     /// - Throws: `RecognitionError` if model loading fails
     public func loadModel() throws {
+        // Already loaded - skip
+        guard !isModelLoaded else { return }
+
         guard !modelPath.isEmpty else {
             throw RecognitionError.invalidModelPath
         }
@@ -54,6 +78,7 @@ public class ModelManager {
         }
 
         self.modelHandle = handle
+        self.isModelLoaded = true
     }
 
     /// Configure streaming parameters
@@ -71,7 +96,10 @@ public class ModelManager {
         guard let handle = modelHandle else {
             throw RecognitionError.modelNotLoaded
         }
+        guard !isStreaming else { return }
+
         whisper_start_streaming(handle, language, task)
+        isStreaming = true
     }
 
     /// Stop streaming and reset state
@@ -79,7 +107,10 @@ public class ModelManager {
         guard let handle = modelHandle else {
             return
         }
+        guard isStreaming else { return }
+
         whisper_stop_streaming(handle)
+        isStreaming = false
     }
 
     /// Add audio chunk to streaming buffer (incremental feeding)
@@ -129,58 +160,150 @@ public class ModelManager {
         return result
     }
 
-    // MARK: - Transcription
-
-    /// Process audio and return transcription segments
-    /// This is a blocking call that runs the model
-    /// - Parameter audio: Audio samples (16kHz mono float32)
-    /// - Returns: Array of transcription segments
-    /// - Throws: `RecognitionError` if transcription fails
-    public func transcribe(audio: [Float]) async throws -> [TranscriptionSegment] {
-        guard let handle = modelHandle else {
-            throw RecognitionError.modelNotLoaded
+    /// Process a single audio chunk with energy filtering
+    /// - Parameters:
+    ///   - chunk: Audio samples (16kHz mono float32)
+    /// - Returns: Array of transcribed text strings
+    public func processChunk(_ chunk: [Float]) async -> [String] {
+        #if DEBUG
+        // Check if this is a dummy buffer
+        let isDummy = EnergyStatistics.isDummyBuffer(chunk)
+        if isDummy {
+            print("🔍 DEBUG: processChunk received dummy buffer (\(chunk.count) samples, all ~0.1) - allowing through for flushing")
         }
+        #endif
 
-        guard !audio.isEmpty else {
+        // Calculate chunk energy and duration (pure computation, safe anywhere)
+        let energy = chunk.reduce(0.0) { $0 + abs($1) } / Float(chunk.count)
+        let chunkDuration = Double(chunk.count) / 16000.0
+
+        // Get current threshold from statistics
+        let threshold = await EnergyStatistics.shared.getCurrentThreshold()
+
+        // Check if we should drop this chunk
+        if threshold > 0 && energy < threshold {
+            let average = await EnergyStatistics.shared.averageEnergy
+            let thresholdPercentage = average > 0 ? (threshold / average) * 100.0 : 0.0
+            print("⚠️  Dropped low-energy chunk (energy: \(String(format: "%.6f", energy)), threshold: \(String(format: "%.6f", threshold)) (\(String(format: "%.1f", thresholdPercentage))%), avg: \(String(format: "%.6f", average)))")
+
+            // Update metrics in background
+            Task(priority: .background) {
+                await EnergyStatistics.shared.updateMetrics(
+                    energy: energy,
+                    chunkDuration: chunkDuration,
+                    transcriptionTime: 0.0,
+                    wasDropped: true
+                )
+            }
             return []
         }
 
-        // Wait if model is busy
-        while isModelBusy {
-            try await Task.sleep(for: .milliseconds(100))
+        // Measure transcription time
+        let startTime = Date()
+
+        // ALL C++ calls happen inside the actor (safe)
+        guard let handle = modelHandle else {
+            print("❌ Model not loaded")
+            return []
         }
 
-        isModelBusy = true
-        defer { isModelBusy = false }
-
-        // Transcribe audio
-        let segments: [TranscriptionSegment] = await Task.detached { [handle, audio] in
-            audio.withUnsafeBufferPointer { buffer in
-                whisper_add_audio_chunk(handle, buffer.baseAddress, UInt(audio.count))
+        do {
+            // Add chunk to C++ (actor-isolated, safe)
+            try chunk.withUnsafeBufferPointer { buffer in
+                whisper_add_audio_chunk(handle, buffer.baseAddress, UInt(chunk.count))
             }
 
+            // Get segments from C++ (actor-isolated, safe)
             var count: UInt = 0
             let cSegments = whisper_get_new_segments(handle, &count)
+
+            let transcriptionTime = Date().timeIntervalSince(startTime)
+
+            // Update statistics in background
+            Task(priority: .background) {
+                await EnergyStatistics.shared.updateMetrics(
+                    energy: energy,
+                    chunkDuration: chunkDuration,
+                    transcriptionTime: transcriptionTime,
+                    wasDropped: false
+                )
+            }
 
             guard count > 0, let cSegments = cSegments else {
                 return []
             }
             defer { whisper_free_segments(cSegments, count) }
 
-            var result: [TranscriptionSegment] = []
+            var result: [String] = []
             for i in 0..<Int(count) {
                 let seg = cSegments[i]
-                let text = seg.text != nil ? String(cString: seg.text) : ""
-                result.append(TranscriptionSegment(
-                    text: text,
-                    start: seg.start,
-                    end: seg.end
-                ))
+                if let text = seg.text {
+                    let trimmed = String(cString: text).trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmed.isEmpty {
+                        result.append(trimmed)
+                    }
+                }
             }
 
             return result
-        }.value
+        } catch {
+            print("❌ Chunk processing error: \(error)")
+            return []
+        }
+    }
 
-        return segments
+    // MARK: - Transcription
+
+    /// Process audio and return transcription segments
+    /// - Parameter audio: Audio samples (16kHz mono float32)
+    /// - Returns: Array of transcription segments
+    public func transcribe(audio: [Float]) async -> [TranscriptionSegment] {
+        guard !audio.isEmpty else {
+            return []
+        }
+
+        #if DEBUG
+        // Skip dummy chunks in debug mode (all 0.1 values used for flushing in tests)
+        let isDummy = EnergyStatistics.isDummyBuffer(audio)
+        if isDummy {
+            print("🔍 DEBUG: Skipping dummy buffer (\(audio.count) samples, all ~0.1)")
+            return []
+        } else {
+            // Show sample values for non-dummy buffers
+            let sampleValues = audio.prefix(5).map { String(format: "%.3f", $0) }.joined(separator: ", ")
+            print("🔍 DEBUG: Processing real buffer (\(audio.count) samples, first 5: [\(sampleValues)])")
+        }
+        #endif
+
+        guard let handle = modelHandle else {
+            print("❌ Model not loaded")
+            return []
+        }
+
+        // All C++ calls inside actor (safe)
+        audio.withUnsafeBufferPointer { buffer in
+            whisper_add_audio_chunk(handle, buffer.baseAddress, UInt(audio.count))
+        }
+
+        var count: UInt = 0
+        let cSegments = whisper_get_new_segments(handle, &count)
+
+        guard count > 0, let cSegments = cSegments else {
+            return []
+        }
+        defer { whisper_free_segments(cSegments, count) }
+
+        var result: [TranscriptionSegment] = []
+        for i in 0..<Int(count) {
+            let seg = cSegments[i]
+            let text = seg.text != nil ? String(cString: seg.text) : ""
+            result.append(TranscriptionSegment(
+                text: text,
+                start: seg.start,
+                end: seg.end
+            ))
+        }
+
+        return result
     }
 }

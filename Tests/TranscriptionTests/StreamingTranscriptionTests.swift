@@ -38,10 +38,7 @@ struct StreamingTranscriptionTests {
             onChunk: { chunkNumber, chunk, isLast in
                 print("[Chunk \(chunkNumber)] Sending \(String(format: "%.2f", Float(chunk.count) / 16000.0))s")
 
-                await recognizer.addAudioChunk(chunk)
-
-                // Check for new text (non-blocking poll)
-                let text = await recognizer.getNewText()
+                let text = await recognizer.addAudioChunk(chunk)
                 if !text.isEmpty {
                     print("📤 Received text: '\(text)'")
                     if !allText.isEmpty {
@@ -52,7 +49,7 @@ struct StreamingTranscriptionTests {
             },
             onComplete: {
                 // Get any final text
-                let finalText = await recognizer.getNewText()
+                let finalText = await recognizer.addAudioChunk([])
                 if !finalText.isEmpty {
                     print("📤 Received final text: '\(finalText)'")
                     if !allText.isEmpty {
@@ -108,10 +105,7 @@ struct StreamingTranscriptionTests {
             onChunk: { chunkNumber, chunk, isLast in
                 print("[Chunk \(chunkNumber)] Sending \(String(format: "%.2f", Float(chunk.count) / 16000.0))s")
 
-                await recognizer.addAudioChunk(chunk)
-
-                // Check for new text (non-blocking poll)
-                let text = await recognizer.getNewText()
+                let text = await recognizer.addAudioChunk(chunk)
                 if !text.isEmpty {
                     print("📤 Received text: '\(text)'")
                     if !allText.isEmpty {
@@ -122,7 +116,7 @@ struct StreamingTranscriptionTests {
             },
             onComplete: {
                 // Get any final text
-                let finalText = await recognizer.getNewText()
+                let finalText = await recognizer.addAudioChunk([])
                 if !finalText.isEmpty {
                     print("📤 Received final text: '\(finalText)'")
                     if !allText.isEmpty {
@@ -162,15 +156,13 @@ struct StreamingTranscriptionTests {
         try await recognizer.configure(language: "en")
 
         // Poll immediately without adding audio - should return empty string
-        let text1 = await recognizer.getNewText()
+        let text1 = await recognizer.addAudioChunk([])
         print("Poll before any audio: \(text1.isEmpty ? "empty string ✅" : "got text (unexpected)")")
         #expect(text1.isEmpty, "Should return empty string when no audio has been added")
 
         // Add very small chunk (too small for a full segment)
         let smallChunk = [Float](repeating: 0.0, count: 1600)  // 0.1 second
-        await recognizer.addAudioChunk(smallChunk)
-
-        let text2 = await recognizer.getNewText()
+        let text2 = await recognizer.addAudioChunk(smallChunk)
         print("Poll after tiny chunk: \(text2.isEmpty ? "empty string ✅" : "got text")")
         // May or may not be empty - just testing the API works
 
