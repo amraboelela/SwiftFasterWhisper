@@ -11,13 +11,29 @@ import CryptoKit
 /// Manages model file downloads, storage, and validation
 public struct ModelFileManager {
 
+    /// Get the app name from Bundle
+    private static var appName: String {
+        // Auto-detect from Bundle
+        if let bundleExecutable = Bundle.main.infoDictionary?["CFBundleExecutable"] as? String {
+            return bundleExecutable
+        }
+
+        // Fallback to bundle identifier's last component
+        if let bundleId = Bundle.main.bundleIdentifier {
+            return bundleId.components(separatedBy: ".").last ?? "SwiftFasterWhisper"
+        }
+
+        // Final fallback
+        return "SwiftFasterWhisper"
+    }
+
     /// Get the default models directory
     public static func defaultModelsDirectory() throws -> URL {
         let fm = FileManager.default
         guard let appSupport = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
             throw RecognitionError.modelLoadFailed("Could not access Application Support directory")
         }
-        let dir = appSupport.appendingPathComponent("SwiftFasterWhisper")
+        let dir = appSupport.appendingPathComponent(appName)
         try fm.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
@@ -240,14 +256,21 @@ public struct ModelFileManager {
             do {
                 print("  Downloading \(fileName)... (attempt \(attempt)/\(maxRetries))")
 
-                // Create download task
-                let (tempURL, response) = try await URLSession.shared.download(from: url)
+                // Create URLSession with delegate for progress tracking
+                let delegate = DownloadDelegate(fileName: fileName, progressCallback: progressCallback)
+                let session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
 
-                guard let httpResponse = response as? HTTPURLResponse,
-                      httpResponse.statusCode == 200 else {
-                    throw RecognitionError.modelLoadFailed(
-                        "Failed to download \(fileName), HTTP status: \((response as? HTTPURLResponse)?.statusCode ?? -1)"
-                    )
+                // Create download task
+                let downloadTask = session.downloadTask(with: url)
+                downloadTask.resume()
+
+                // Wait for download to complete
+                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                    delegate.completion = continuation
+                }
+
+                guard let tempURL = delegate.tempURL else {
+                    throw RecognitionError.modelLoadFailed("Download completed but no file received")
                 }
 
                 // Move downloaded file
@@ -263,9 +286,10 @@ public struct ModelFileManager {
 
                 print("  ✅ Downloaded \(fileName) (\(fileSize / 1024 / 1024) MB)")
 
-                // Call progress callback
+                // Call progress callback with completion
                 progressCallback?(fileName, 1.0, fileSize, fileSize)
 
+                session.invalidateAndCancel()
                 return  // Success!
 
             } catch {
@@ -278,6 +302,35 @@ public struct ModelFileManager {
         }
 
         throw lastError ?? RecognitionError.modelLoadFailed("Failed to download \(fileName) after \(maxRetries) attempts")
+    }
+
+    /// URLSession delegate for download progress tracking
+    private class DownloadDelegate: NSObject, URLSessionDownloadDelegate {
+        let fileName: String
+        let progressCallback: DownloadProgressCallback?
+        var completion: CheckedContinuation<Void, Error>?
+        var tempURL: URL?
+
+        init(fileName: String, progressCallback: DownloadProgressCallback?) {
+            self.fileName = fileName
+            self.progressCallback = progressCallback
+        }
+
+        func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
+            tempURL = location
+            completion?.resume()
+        }
+
+        func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
+            let progress = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
+            progressCallback?(fileName, progress, totalBytesWritten, totalBytesExpectedToWrite)
+        }
+
+        func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+            if let error = error {
+                completion?.resume(throwing: error)
+            }
+        }
     }
 
     /// Clear all downloaded models

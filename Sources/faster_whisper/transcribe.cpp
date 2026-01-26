@@ -235,7 +235,7 @@ std::tuple<std::vector<Segment>, TranscriptionInfo> WhisperModel::transcribe(
     throw std::runtime_error("Failed to extract features from audio");
   }
 
-  std::cout << "🔄 Transcribing " << std::fixed << std::setprecision(1) << duration << "s..." << std::endl;
+  std::cout << "#debug 🔄 Transcribing " << std::fixed << std::setprecision(1) << duration << "s..." << std::endl;
 
   // Log feature statistics for debugging (commented out for production)
   /*

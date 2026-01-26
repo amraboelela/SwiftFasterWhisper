@@ -45,7 +45,7 @@ public actor StreamingRecognizer {
 
         // Backpressure warning
         if chunksQueue.count > 200 {
-            print("⚠️  Audio backlog growing: \(chunksQueue.count) chunks queued")
+            print("#debug ⚠️  Audio backlog growing: \(chunksQueue.count) chunks queued")
         }
 
         // Start consumer if not already running (set flag first to prevent race)

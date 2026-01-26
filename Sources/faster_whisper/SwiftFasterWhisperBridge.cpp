@@ -100,6 +100,18 @@ static bool isHallucination(const std::string& text) {
         "subtitle",
         "subtitles",
         "captions",
+        // YouTube-style intro hallucinations
+        "welcome to my channel",
+        "today i'm going to show you",
+        "today i'm going to",
+        "how to make a",
+        "and turn on notifications",
+        "turn on notifications",
+        "hit the bell icon",
+        "smash that like button",
+        "don't forget to like",
+        "comment below",
+        "let me know in the comments",
         // Turkish-specific hallucinations
         "altyazı",
         "m.k.",
@@ -581,7 +593,7 @@ TranscriptionSegment* whisper_get_new_segments(
             if (!isHallucination(trimmed_text)) {
                 filtered_segments.push_back(seg);
             } else {
-                std::cout << "⚠️  Filtered hallucination: \"" << trimmed_text << "\"" << std::endl;
+                std::cout << "#debug ⚠️  Filtered hallucination: \"" << trimmed_text << "\"" << std::endl;
             }
         }
 
