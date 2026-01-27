@@ -42,7 +42,7 @@ public actor StreamingRecognizer {
     /// - Returns: New transcribed text since last call
     public func addAudioChunk(_ chunk: [Float]) -> String {
         // Drop all pending chunks if backlog is too large
-        if chunksQueue.count >= 100 {
+        if chunksQueue.count >= 10 {
             let dropCount = chunksQueue.count
             chunksQueue.removeAll()
             readIndex = 0
