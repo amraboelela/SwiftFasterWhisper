@@ -39,9 +39,7 @@ let package = Package(
             ],
             linkerSettings: [
                 .linkedLibrary("c++"),
-                .linkedLibrary("z"),
-                .linkedLibrary("sentencepiece"),
-                .unsafeFlags(["-L/opt/homebrew/lib"])
+                .linkedLibrary("z")
             ]
         ),
         // Binary framework

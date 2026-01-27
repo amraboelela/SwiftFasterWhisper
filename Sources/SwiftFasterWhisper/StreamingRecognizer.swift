@@ -41,12 +41,15 @@ public actor StreamingRecognizer {
     /// - Parameter chunk: Audio samples (16kHz mono float32, typically 30ms chunks work well)
     /// - Returns: New transcribed text since last call
     public func addAudioChunk(_ chunk: [Float]) -> String {
-        chunksQueue.append(chunk)
-
-        // Backpressure warning
-        if chunksQueue.count > 200 {
-            print("#debug ⚠️  Audio backlog growing: \(chunksQueue.count) chunks queued")
+        // Drop all pending chunks if backlog is too large
+        if chunksQueue.count >= 100 {
+            let dropCount = chunksQueue.count
+            chunksQueue.removeAll()
+            readIndex = 0
+            print("#debug ⚠️  Dropped all \(dropCount) pending chunks, starting fresh")
         }
+
+        chunksQueue.append(chunk)
 
         // Start consumer if not already running (set flag first to prevent race)
         if !isConsuming {
